@@ -19,6 +19,7 @@ import "time"
 
 type User struct {
 	MRI         string  `json:"mri"`
+	ObjectID    string  `json:"objectId,omitempty"`
 	DisplayName string  `json:"displayName"`
 	Email       string  `json:"email,omitempty"`
 	JobTitle    string  `json:"jobTitle,omitempty"`
@@ -71,14 +72,17 @@ type TeamChannel struct {
 }
 
 type Member struct {
-	MRI  string `json:"mri"`
-	Role string `json:"role,omitempty"` // "Admin" or ""
+	MRI         string `json:"mri"`
+	DisplayName string `json:"displayName,omitempty"`
+	Email       string `json:"email,omitempty"`
+	Role        string `json:"role,omitempty"` // "Admin" or ""
 }
 
 type Message struct {
 	ID          string         `json:"id"`
 	ThreadID    string         `json:"threadId"`
-	From        string         `json:"from"`        // user MRI
+	From        string         `json:"from"` // user MRI
+	DisplayName string         `json:"displayName,omitempty"`
 	MessageType string         `json:"messagetype"` // "Text", "RichText/Html", "Event/Call", ...
 	Content     string         `json:"content"`     // text or HTML per ContentType
 	ContentType string         `json:"contenttype"` // "text" or "html"
@@ -125,6 +129,7 @@ type SharedFile struct {
 	SiteURL  string `json:"site_url"`
 	FileURL  string `json:"file_url"`
 	ShareURL string `json:"share_url"`
+	Size     int64  `json:"size,omitempty"`
 }
 
 type Reaction struct {

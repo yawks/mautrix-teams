@@ -52,9 +52,12 @@ type rawThreadProps struct {
 }
 
 type rawMember struct {
-	ID   string `json:"id"`
-	MRI  string `json:"mri"`
-	Role string `json:"role"`
+	ID                string `json:"id"`
+	MRI               string `json:"mri"`
+	DisplayName       string `json:"displayName"`
+	Email             string `json:"email"`
+	UserPrincipalName string `json:"userPrincipalName"`
+	Role              string `json:"role"`
 }
 
 type rawMessageStub struct {
@@ -290,10 +293,9 @@ func (c *Client) FetchShortProfiles(ctx context.Context, mris []string) ([]User,
 	if err := c.doJSON(ctx, "POST", endpoint, AuthBearer, mris, &resp); err != nil {
 		return nil, err
 	}
-	rows := resp.Value
-	if len(rows) == 0 {
-		rows = resp.ResolvedUsers
-	}
+	rows := make([]rawUserProfile, 0, len(resp.Value)+len(resp.ResolvedUsers))
+	rows = append(rows, resp.Value...)
+	rows = append(rows, resp.ResolvedUsers...)
 	out := make([]User, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, profileToUser(&r))
@@ -311,7 +313,9 @@ func (c *Client) GetUser(ctx context.Context, mri string) (*User, error) {
 	}
 	var profile *User
 	for i := range users {
-		if strings.EqualFold(users[i].MRI, mri) || users[i].MRI == "" {
+		if strings.EqualFold(users[i].MRI, mri) ||
+			mriLookupObjectID(users[i].ObjectID) == mriLookupObjectID(mri) ||
+			users[i].MRI == "" {
 			p := users[i]
 			profile = &p
 			break
@@ -376,6 +380,7 @@ func mergeUserProfile(dst, src *User) {
 func profileToUser(r *rawUserProfile) User {
 	return User{
 		MRI:         firstNonEmpty(r.MRI, r.ObjectID),
+		ObjectID:    r.ObjectID,
 		DisplayName: firstNonEmpty(r.DisplayName, joinName(r.GivenName, r.Surname), r.UserPrincipalName, r.Email),
 		Email:       firstNonEmpty(r.Email, r.UserPrincipalName),
 		JobTitle:    r.JobTitle,
@@ -795,7 +800,10 @@ func convertRawConversation(r *rawConversation) Chat {
 		if mri == "" {
 			continue
 		}
-		c.Members = append(c.Members, Member{MRI: mri, Role: m.Role})
+		c.Members = append(c.Members, Member{
+			MRI: mri, DisplayName: m.DisplayName,
+			Email: firstNonEmpty(m.Email, m.UserPrincipalName), Role: m.Role,
+		})
 	}
 	if r.LastMessage != nil {
 		c.LastUpdated = ParseTeamsTime(r.LastMessage.ComposeTime)
@@ -810,6 +818,12 @@ func convertRawConversation(r *rawConversation) Chat {
 		}
 	}
 	return c
+}
+
+func mriLookupObjectID(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.TrimPrefix(value, "8:orgid:")
+	return strings.ReplaceAll(value, "-", "")
 }
 
 func peersFromThreadID(id string) []string {

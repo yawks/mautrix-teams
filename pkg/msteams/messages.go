@@ -76,7 +76,7 @@ func (c *Client) SendMessage(ctx context.Context, threadID, content string, opts
 		ClientMessageID: opts.ClientMessageID,
 		Content:         content,
 		MessageType:     messageTypeFor(opts),
-		ContentType:     "text",
+		ContentType:     contentTypeFor(opts),
 		IMDisplayName:   opts.DisplayName,
 		Properties:      buildProperties(opts),
 	}
@@ -251,6 +251,17 @@ func DecodeReactionKey(key string) string {
 	if emoji, ok := teamsEmojiReverse[key]; ok {
 		return emoji
 	}
+	if emoji, ok := legacyTeamsReactionAliases[key]; ok {
+		return emoji
+	}
+	if separator := strings.LastIndex(key, "-tone"); separator > 0 {
+		base, tone := key[:separator], key[separator+len("-tone"):]
+		if emoji, ok := teamsEmojiReverse[base]; ok {
+			if modifier, ok := teamsSkinToneModifiers[tone]; ok {
+				return emoji + modifier
+			}
+		}
+	}
 	hexPart := key
 	if i := strings.Index(key, "_"); i >= 0 {
 		hexPart = key[:i]
@@ -259,6 +270,18 @@ func DecodeReactionKey(key string) string {
 		return string(rune(n))
 	}
 	return key
+}
+
+var legacyTeamsReactionAliases = map[string]string{
+	"acks": "✅",
+}
+
+var teamsSkinToneModifiers = map[string]string{
+	"1": "🏻",
+	"2": "🏼",
+	"3": "🏽",
+	"4": "🏾",
+	"5": "🏿",
 }
 
 type HistoryOptions struct {
@@ -284,6 +307,7 @@ type historyResponse struct {
 type rawMessage struct {
 	ID              string         `json:"id"`
 	From            string         `json:"from"`
+	IMDisplayName   string         `json:"imdisplayname"`
 	Content         string         `json:"content"`
 	ContentType     string         `json:"contenttype"`
 	MessageType     string         `json:"messagetype"`
@@ -667,11 +691,19 @@ func messageTypeFor(opts SendOptions) string {
 	return "Text"
 }
 
+func contentTypeFor(opts SendOptions) string {
+	if opts.ContentType == "html" {
+		return "html"
+	}
+	return "text"
+}
+
 func convertRawMessage(r *rawMessage, threadID string) Message {
 	return Message{
 		ID:          r.ID,
 		ThreadID:    threadID,
 		From:        teamsMRIFromURL(r.From),
+		DisplayName: r.IMDisplayName,
 		MessageType: r.MessageType,
 		Content:     r.Content,
 		ContentType: r.ContentType,
@@ -711,10 +743,14 @@ func parsePropertiesFiles(props map[string]any) []SharedFile {
 		ItemID   string `json:"itemid"`
 		ID       string `json:"id"`
 		FileName string `json:"fileName"`
+		FileSize any    `json:"fileSize"`
+		Size     any    `json:"size"`
 		FileInfo struct {
 			ShareURL string `json:"shareUrl"`
 			FileURL  string `json:"fileUrl"`
 			SiteURL  string `json:"siteUrl"`
+			FileSize any    `json:"fileSize"`
+			Size     any    `json:"size"`
 		} `json:"fileInfo"`
 		BaseURL   string `json:"baseUrl"`
 		ObjectURL string `json:"objectUrl"`
@@ -745,9 +781,30 @@ func parsePropertiesFiles(props map[string]any) []SharedFile {
 			SiteURL:  siteURL,
 			FileURL:  fileURL,
 			ShareURL: it.FileInfo.ShareURL,
+			Size:     firstFileSize(it.FileInfo.FileSize, it.FileInfo.Size, it.FileSize, it.Size),
 		})
 	}
 	return out
+}
+
+func firstFileSize(values ...any) int64 {
+	for _, value := range values {
+		switch typed := value.(type) {
+		case float64:
+			if typed > 0 {
+				return int64(typed)
+			}
+		case string:
+			if size, err := strconv.ParseInt(typed, 10, 64); err == nil && size > 0 {
+				return size
+			}
+		case json.Number:
+			if size, err := typed.Int64(); err == nil && size > 0 {
+				return size
+			}
+		}
+	}
+	return 0
 }
 
 // parsePropertiesMentions decodes properties.mentions. The slice index must

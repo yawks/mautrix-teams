@@ -76,6 +76,9 @@ func TestSendMessage(t *testing.T) {
 	if capturedBody.MessageType != "RichText/Html" {
 		t.Errorf("messagetype=%q, want RichText/Html", capturedBody.MessageType)
 	}
+	if capturedBody.ContentType != "html" {
+		t.Errorf("contenttype=%q, want html", capturedBody.ContentType)
+	}
 	if capturedBody.Content != "hello" {
 		t.Errorf("content=%q", capturedBody.Content)
 	}
@@ -305,5 +308,25 @@ func TestTeamsReactionKeyEncoding(t *testing.T) {
 	}
 	if got := DecodeReactionKey(TeamsReactionKey("👍")); got != "👍" {
 		t.Errorf("glyph did not survive key round-trip: got %q", got)
+	}
+	for key, want := range map[string]string{
+		"handsinair-tone2": "🙌🏼",
+		"acks":             "✅",
+	} {
+		if got := DecodeReactionKey(key); got != want {
+			t.Errorf("DecodeReactionKey(%q) = %q, want %q", key, got, want)
+		}
+	}
+}
+
+func TestParsePropertiesFilesIncludesSize(t *testing.T) {
+	files := parsePropertiesFiles(map[string]any{
+		"files": `[{"itemid":"abc","fileName":"report.pdf","fileInfo":{"shareUrl":"https://tenant.sharepoint.com/report.pdf","fileSize":"4096"}}]`,
+	})
+	if len(files) != 1 {
+		t.Fatalf("files=%d, want 1", len(files))
+	}
+	if files[0].Size != 4096 {
+		t.Fatalf("size=%d, want 4096", files[0].Size)
 	}
 }
