@@ -27,11 +27,12 @@ import (
 )
 
 const (
-	DefaultChatSvcBase = "https://apac.ng.msg.teams.microsoft.com"
-	DefaultAuthSvcBase = "https://teams.microsoft.com/api/authsvc/v1.0"
-	DefaultMTBase      = "https://teams.microsoft.com/api/mt/part/emea-03"
-	DefaultTrouterBase = "https://go.trouter.teams.microsoft.com/v4"
-	DefaultAMSBase     = "https://teams.microsoft.com/api/amsMTProd"
+	DefaultChatSvcBase  = "https://apac.ng.msg.teams.microsoft.com"
+	DefaultAuthSvcBase  = "https://teams.microsoft.com/api/authsvc/v1.0"
+	DefaultMTBase       = "https://teams.microsoft.com/api/mt/part/emea-03"
+	DefaultTrouterBase  = "https://go.trouter.teams.microsoft.com/v4"
+	DefaultAMSBase      = "https://teams.microsoft.com/api/amsMTProd"
+	DefaultPresenceBase = "https://presence.teams.microsoft.com"
 
 	// AMS's platform-id regex accepts only SkypeOfficialClient/<build>/<ver>.
 	// Other values (Teams/*, Mozilla/*, SkypeiOS/*, SkypeTeams/*) get a 400.
@@ -51,12 +52,13 @@ type ClientConfig struct {
 }
 
 type Endpoints struct {
-	TokenURL    string
-	AuthzURL    string
-	ChatSvcBase string
-	TrouterBase string
-	MTBase      string
-	AMSBase     string
+	TokenURL     string
+	AuthzURL     string
+	ChatSvcBase  string
+	TrouterBase  string
+	MTBase       string
+	AMSBase      string
+	PresenceBase string
 }
 
 type Token struct {
@@ -84,6 +86,7 @@ type Client struct {
 	csaBase              string
 	amsBase              string
 	delveBase            string
+	presenceBase         string
 
 	tokenLock      sync.RWMutex
 	skype          *Token
@@ -223,17 +226,18 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Client{
-		cfg:         cfg,
-		http:        &http.Client{Timeout: 60 * time.Second},
-		log:         cfg.Logger.With().Str("component", "msteams").Logger(),
-		events:      make(chan Event, 256),
-		skype:       &Token{Value: cfg.SkypeToken},
-		auth:        &Token{Value: cfg.AuthToken},
-		refresh:     cfg.RefreshToken,
-		chatSvcBase: firstNonEmpty(cfg.Endpoints.ChatSvcBase, DefaultChatSvcBase),
-		mtBase:      firstNonEmpty(cfg.Endpoints.MTBase, DefaultMTBase),
-		stopCtx:     ctx,
-		stopCancel:  cancel,
+		cfg:          cfg,
+		http:         &http.Client{Timeout: 60 * time.Second},
+		log:          cfg.Logger.With().Str("component", "msteams").Logger(),
+		events:       make(chan Event, 256),
+		skype:        &Token{Value: cfg.SkypeToken},
+		auth:         &Token{Value: cfg.AuthToken},
+		refresh:      cfg.RefreshToken,
+		chatSvcBase:  firstNonEmpty(cfg.Endpoints.ChatSvcBase, DefaultChatSvcBase),
+		mtBase:       firstNonEmpty(cfg.Endpoints.MTBase, DefaultMTBase),
+		presenceBase: firstNonEmpty(cfg.Endpoints.PresenceBase, DefaultPresenceBase),
+		stopCtx:      ctx,
+		stopCancel:   cancel,
 	}
 	return c, nil
 }
