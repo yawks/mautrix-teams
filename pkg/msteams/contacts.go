@@ -866,6 +866,23 @@ func (c *Client) CreateGroupChat(ctx context.Context, topic string, members []st
 	return nil, fmt.Errorf("group chat was created but its thread id could not be resolved")
 }
 
+// RemoveThreadMember removes a member from a group chat roster.
+func (c *Client) RemoveThreadMember(ctx context.Context, threadID, memberMRI string) error {
+	threadID = strings.TrimSpace(threadID)
+	memberMRI = strings.TrimSpace(memberMRI)
+	if threadID == "" || memberMRI == "" {
+		return fmt.Errorf("empty thread or member id")
+	}
+	endpoint := c.chatSvcBaseURL() + "/v1/threads/" + url.PathEscape(threadID) +
+		"/members/" + url.PathEscape(memberMRI)
+	return c.doJSON(ctx, http.MethodDelete, endpoint, AuthSkype, nil, nil)
+}
+
+// LeaveGroupChat removes the authenticated user from a group chat roster.
+func (c *Client) LeaveGroupChat(ctx context.Context, threadID string) error {
+	return c.RemoveThreadMember(ctx, threadID, c.cfg.UserMRI)
+}
+
 func chatHasMembers(chat Chat, wanted map[string]bool) bool {
 	found := make(map[string]bool, len(chat.Members))
 	for _, member := range chat.Members {

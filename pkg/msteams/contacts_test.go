@@ -140,6 +140,42 @@ func TestCreateGroupChat(t *testing.T) {
 	}
 }
 
+func TestLeaveGroupChat(t *testing.T) {
+	hit := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		if r.Method != http.MethodDelete {
+			t.Fatalf("method %q, want DELETE", r.Method)
+		}
+		if r.URL.Path != "/v1/threads/19:group@thread.v2/members/8:orgid:me" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		if got := r.Header.Get("Authentication"); got != "skypetoken=skype-value" {
+			t.Fatalf("missing skype auth: %q", got)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(ClientConfig{
+		UserMRI:    "8:orgid:me",
+		SkypeToken: "skype-value",
+		Endpoints:  Endpoints{ChatSvcBase: srv.URL},
+		Logger:     zerolog.Nop(),
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	if err := c.LeaveGroupChat(context.Background(), "19:group@thread.v2"); err != nil {
+		t.Fatalf("LeaveGroupChat: %v", err)
+	}
+	if !hit {
+		t.Fatal("leave group did not hit the endpoint")
+	}
+}
+
 func TestStartOneOnOneCreatesStickyThread(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/threads" {
