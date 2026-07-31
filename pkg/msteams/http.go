@@ -103,7 +103,11 @@ func (c *Client) sendJSON(ctx context.Context, method, url string, auth AuthKind
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	err = json.NewDecoder(resp.Body).Decode(out)
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	return err
 }
 
 // reauth runs the token refresh appropriate for the kind of auth that just

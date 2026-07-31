@@ -758,20 +758,53 @@ func parseSubstrateResponse(data []byte) []User {
 	return users
 }
 
-// StartOneOnOne returns the implicit DM thread between the logged-in user
-// and target. Teams doesn't require an explicit "create" call: the thread id
-// is the two GUIDs sorted lexicographically, and Teams materialises the
-// conversation server-side on the first message we POST into it.
+// StartOneOnOne creates (or resolves) the stable sticky thread for a DM.
+// Sending directly to either the user's MRI or an unmaterialised calculated
+// thread ID is rejected by the chat service.
 func (c *Client) StartOneOnOne(ctx context.Context, targetMRI string) (*Chat, error) {
+	targetMRI = strings.TrimSpace(targetMRI)
 	if targetMRI == "" {
 		return nil, fmt.Errorf("empty target MRI")
 	}
-	a := strings.TrimPrefix(c.cfg.UserMRI, "8:orgid:")
-	b := strings.TrimPrefix(targetMRI, "8:orgid:")
-	if a > b {
-		a, b = b, a
+	payload := map[string]any{
+		"members": []map[string]any{
+			{"id": c.cfg.UserMRI, "role": "Admin"},
+			{"id": targetMRI, "role": "Admin"},
+		},
+		"properties": map[string]any{
+			"threadType":         "chat",
+			"chatFilesIndexId":   "2",
+			"uniquerosterthread": "true",
+			"fixedRoster":        "true",
+		},
 	}
-	threadID := fmt.Sprintf("19:%s_%s@unq.gbl.spaces", a, b)
+	var raw rawConversation
+	if err := c.doJSON(ctx, http.MethodPost, c.chatSvcBaseURL()+"/v1/threads", AuthSkype, payload, &raw); err != nil {
+		return nil, fmt.Errorf("create one-to-one chat: %w", err)
+	}
+	threadID := raw.ID
+	if threadID == "" {
+		threadID = DM1on1ThreadID(c.cfg.UserMRI, targetMRI)
+	}
+	if threadID == "" {
+		wanted := map[string]bool{
+			strings.ToLower(c.cfg.UserMRI): true,
+			strings.ToLower(targetMRI):     true,
+		}
+		chats, err := c.ListChats(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("resolve created one-to-one chat: %w", err)
+		}
+		for i := len(chats) - 1; i >= 0; i-- {
+			if chats[i].Type == ChatType1on1 && chatHasMembers(chats[i], wanted) {
+				threadID = chats[i].ID
+				break
+			}
+		}
+	}
+	if threadID == "" {
+		return nil, fmt.Errorf("one-to-one chat was created but its thread id could not be resolved")
+	}
 	return &Chat{
 		ID:   threadID,
 		Type: ChatType1on1,
@@ -783,7 +816,70 @@ func (c *Client) StartOneOnOne(ctx context.Context, targetMRI string) (*Chat, er
 }
 
 func (c *Client) CreateGroupChat(ctx context.Context, topic string, members []string) (*Chat, error) {
-	return nil, ErrNotImplemented
+	topic = strings.TrimSpace(topic)
+	if len(members) < 2 {
+		return nil, fmt.Errorf("group chat requires at least two other members")
+	}
+	seen := make(map[string]bool, len(members)+1)
+	requestMembers := make([]map[string]any, 0, len(members)+1)
+	addMember := func(mri, role string) {
+		mri = strings.TrimSpace(mri)
+		if mri == "" || seen[strings.ToLower(mri)] {
+			return
+		}
+		seen[strings.ToLower(mri)] = true
+		requestMembers = append(requestMembers, map[string]any{"id": mri, "role": role})
+	}
+	addMember(c.cfg.UserMRI, "Admin")
+	for _, mri := range members {
+		addMember(mri, "User")
+	}
+	payload := map[string]any{
+		"members": requestMembers,
+		"properties": map[string]any{
+			"threadType": "Chat", "templateType": "Chat", "chatType": "group", "topic": topic,
+		},
+	}
+	var raw rawConversation
+	if err := c.doJSON(ctx, http.MethodPost, c.chatSvcBaseURL()+"/v1/threads", AuthSkype, payload, &raw); err != nil {
+		return nil, fmt.Errorf("create group chat: %w", err)
+	}
+	if raw.ID != "" {
+		chat := convertRawConversation(&raw)
+		chat.Type = ChatTypeGroup
+		if chat.Topic == "" {
+			chat.Topic = topic
+		}
+		return &chat, nil
+	}
+	// Some regional deployments return 201 with an empty body. Resolve the
+	// newly-created thread from the refreshed conversation list.
+	chats, err := c.ListChats(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve created group chat: %w", err)
+	}
+	for i := len(chats) - 1; i >= 0; i-- {
+		if chats[i].Type == ChatTypeGroup && strings.EqualFold(strings.TrimSpace(chats[i].Topic), topic) && chatHasMembers(chats[i], seen) {
+			return &chats[i], nil
+		}
+	}
+	return nil, fmt.Errorf("group chat was created but its thread id could not be resolved")
+}
+
+func chatHasMembers(chat Chat, wanted map[string]bool) bool {
+	found := make(map[string]bool, len(chat.Members))
+	for _, member := range chat.Members {
+		found[strings.ToLower(member.MRI)] = true
+	}
+	if len(found) != len(wanted) {
+		return false
+	}
+	for mri := range wanted {
+		if !found[mri] {
+			return false
+		}
+	}
+	return true
 }
 
 func convertRawConversation(r *rawConversation) Chat {

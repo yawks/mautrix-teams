@@ -17,6 +17,7 @@ package msteams
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -99,6 +100,87 @@ func TestListChats(t *testing.T) {
 		if len(chats[i].Members) != tc.members {
 			t.Errorf("chat[%d].Members=%d want %d", i, len(chats[i].Members), tc.members)
 		}
+	}
+}
+
+func TestCreateGroupChat(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/threads" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authentication"); got != "skypetoken=skype-value" {
+			t.Fatalf("missing skype auth: %q", got)
+		}
+		var body struct {
+			Members    []struct{ ID, Role string } `json:"members"`
+			Properties map[string]any              `json:"properties"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body.Members) != 3 || body.Properties["topic"] != "Planning" {
+			t.Fatalf("unexpected create payload: %+v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"19:new@thread.v2","properties":{"topic":"Planning"},"members":[{"id":"8:orgid:me"},{"id":"8:orgid:alice"},{"id":"8:orgid:bob"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c, err := NewClient(ClientConfig{UserMRI: "8:orgid:me", SkypeToken: "skype-value", Endpoints: Endpoints{ChatSvcBase: srv.URL}, Logger: zerolog.Nop()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	chat, err := c.CreateGroupChat(context.Background(), "Planning", []string{"8:orgid:alice", "8:orgid:bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.ID != "19:new@thread.v2" || chat.Type != ChatTypeGroup {
+		t.Fatalf("unexpected chat: %+v", chat)
+	}
+}
+
+func TestStartOneOnOneCreatesStickyThread(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/threads" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		var body struct {
+			Members    []struct{ ID, Role string } `json:"members"`
+			Properties map[string]any              `json:"properties"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body.Members) != 2 || body.Members[0].Role != "Admin" || body.Members[1].ID != "8:orgid:alice" {
+			t.Fatalf("unexpected members: %+v", body.Members)
+		}
+		if body.Properties["uniquerosterthread"] != "true" || body.Properties["fixedRoster"] != "true" {
+			t.Fatalf("unexpected properties: %+v", body.Properties)
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	t.Cleanup(srv.Close)
+	c, err := NewClient(ClientConfig{
+		UserMRI:    "8:orgid:me",
+		SkypeToken: "skype-value",
+		Endpoints:  Endpoints{ChatSvcBase: srv.URL},
+		Logger:     zerolog.Nop(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	chat, err := c.StartOneOnOne(context.Background(), " 8:orgid:alice ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.ID != "19:alice_me@unq.gbl.spaces" || chat.Type != ChatType1on1 {
+		t.Fatalf("unexpected chat: %+v", chat)
+	}
+	if len(chat.Members) != 2 || chat.Members[0].MRI != "8:orgid:me" || chat.Members[1].MRI != "8:orgid:alice" {
+		t.Fatalf("unexpected members: %+v", chat.Members)
 	}
 }
 
