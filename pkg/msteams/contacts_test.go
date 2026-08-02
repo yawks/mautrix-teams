@@ -140,6 +140,94 @@ func TestCreateGroupChat(t *testing.T) {
 	}
 }
 
+func TestUpdateGroupChatMetadata(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPut || r.URL.Path != "/v1/threads/19:group@thread.v2/properties" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if requests == 1 && body["topic"] != "New name" {
+			t.Fatalf("unexpected topic payload: %+v", body)
+		}
+		if requests == 2 && body["description"] != "New description" {
+			t.Fatalf("unexpected description payload: %+v", body)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	c, err := NewClient(ClientConfig{UserMRI: "8:orgid:me", SkypeToken: "skype-value", Endpoints: Endpoints{ChatSvcBase: srv.URL}, Logger: zerolog.Nop()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	if err = c.UpdateThreadTopic(context.Background(), "19:group@thread.v2", " New name "); err != nil {
+		t.Fatal(err)
+	}
+	if err = c.UpdateThreadDescription(context.Background(), "19:group@thread.v2", " New description "); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAddAndUpdateGroupChatMembers(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		switch requests {
+		case 1:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/threads/19:group@thread.v2/members" {
+				t.Fatalf("unexpected add request %s %s", r.Method, r.URL.Path)
+			}
+			var body struct {
+				Members []struct{ ID, Role string } `json:"members"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if len(body.Members) != 2 || body.Members[0].ID != "8:orgid:alice" || body.Members[0].Role != "User" {
+				t.Fatalf("unexpected members payload: %+v", body.Members)
+			}
+			w.WriteHeader(http.StatusCreated)
+		case 2, 3:
+			if r.Method != http.MethodPut {
+				t.Fatalf("unexpected role method %s", r.Method)
+			}
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			wantRole := "Admin"
+			if requests == 3 {
+				wantRole = "User"
+			}
+			if body["role"] != wantRole {
+				t.Fatalf("role=%q want %q", body["role"], wantRole)
+			}
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c, err := NewClient(ClientConfig{UserMRI: "8:orgid:me", SkypeToken: "skype-value", Endpoints: Endpoints{ChatSvcBase: srv.URL}, Logger: zerolog.Nop()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	ctx := context.Background()
+	if err = c.AddThreadMembers(ctx, "19:group@thread.v2", []string{"8:orgid:alice", "8:orgid:bob", "8:orgid:alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = c.UpdateThreadMemberRole(ctx, "19:group@thread.v2", "8:orgid:alice", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err = c.UpdateThreadMemberRole(ctx, "19:group@thread.v2", "8:orgid:alice", "user"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLeaveGroupChat(t *testing.T) {
 	hit := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

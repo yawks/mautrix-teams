@@ -44,6 +44,7 @@ type rawConversation struct {
 // /threads/<id>; meeting subject is JSON-in-JSON under "meeting".
 type rawThreadProps struct {
 	Topic              string `json:"topic"`
+	Description        string `json:"description"`
 	ChatType           string `json:"chatType"` // meeting, group, or empty
 	ThreadType         string `json:"threadType"`
 	Meeting            string `json:"meeting"`
@@ -866,6 +867,77 @@ func (c *Client) CreateGroupChat(ctx context.Context, topic string, members []st
 	return nil, fmt.Errorf("group chat was created but its thread id could not be resolved")
 }
 
+// UpdateThreadProperties changes mutable metadata on a chat thread.
+func (c *Client) UpdateThreadProperties(ctx context.Context, threadID string, properties map[string]string) error {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return fmt.Errorf("empty thread id")
+	}
+	if len(properties) == 0 {
+		return nil
+	}
+	endpoint := c.chatSvcBaseURL() + "/v1/threads/" + url.PathEscape(threadID) + "/properties"
+	return c.doJSON(ctx, http.MethodPut, endpoint, AuthSkype, properties, nil)
+}
+
+// UpdateThreadTopic changes the display name of a group chat.
+func (c *Client) UpdateThreadTopic(ctx context.Context, threadID, topic string) error {
+	topic = strings.TrimSpace(topic)
+	if topic == "" {
+		return fmt.Errorf("empty thread topic")
+	}
+	return c.UpdateThreadProperties(ctx, threadID, map[string]string{"topic": topic})
+}
+
+// UpdateThreadDescription changes the description metadata of a chat thread.
+func (c *Client) UpdateThreadDescription(ctx context.Context, threadID, description string) error {
+	return c.UpdateThreadProperties(ctx, threadID, map[string]string{"description": strings.TrimSpace(description)})
+}
+
+// AddThreadMembers adds regular members to a group chat roster.
+func (c *Client) AddThreadMembers(ctx context.Context, threadID string, memberMRIs []string) error {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return fmt.Errorf("empty thread id")
+	}
+	seen := make(map[string]bool, len(memberMRIs))
+	members := make([]map[string]string, 0, len(memberMRIs))
+	for _, memberMRI := range memberMRIs {
+		memberMRI = strings.TrimSpace(memberMRI)
+		key := strings.ToLower(memberMRI)
+		if memberMRI == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		members = append(members, map[string]string{"id": memberMRI, "role": "User"})
+	}
+	if len(members) == 0 {
+		return nil
+	}
+	endpoint := c.chatSvcBaseURL() + "/v1/threads/" + url.PathEscape(threadID) + "/members"
+	return c.doJSON(ctx, http.MethodPost, endpoint, AuthSkype, map[string]any{"members": members}, nil)
+}
+
+// UpdateThreadMemberRole promotes or demotes an existing group chat member.
+func (c *Client) UpdateThreadMemberRole(ctx context.Context, threadID, memberMRI, role string) error {
+	threadID = strings.TrimSpace(threadID)
+	memberMRI = strings.TrimSpace(memberMRI)
+	if threadID == "" || memberMRI == "" {
+		return fmt.Errorf("empty thread or member id")
+	}
+	if !strings.EqualFold(role, "Admin") && !strings.EqualFold(role, "User") {
+		return fmt.Errorf("invalid thread member role %q", role)
+	}
+	if strings.EqualFold(role, "Admin") {
+		role = "Admin"
+	} else {
+		role = "User"
+	}
+	endpoint := c.chatSvcBaseURL() + "/v1/threads/" + url.PathEscape(threadID) +
+		"/members/" + url.PathEscape(memberMRI)
+	return c.doJSON(ctx, http.MethodPut, endpoint, AuthSkype, map[string]string{"role": role}, nil)
+}
+
 // RemoveThreadMember removes a member from a group chat roster.
 func (c *Client) RemoveThreadMember(ctx context.Context, threadID, memberMRI string) error {
 	threadID = strings.TrimSpace(threadID)
@@ -901,8 +973,9 @@ func chatHasMembers(chat Chat, wanted map[string]bool) bool {
 
 func convertRawConversation(r *rawConversation) Chat {
 	c := Chat{
-		ID:    r.ID,
-		Topic: firstNonEmpty(r.ThreadProperties.Topic, r.Properties.Topic, meetingSubject(&r.Properties), meetingSubject(&r.ThreadProperties)),
+		ID:          r.ID,
+		Topic:       firstNonEmpty(r.ThreadProperties.Topic, r.Properties.Topic, meetingSubject(&r.Properties), meetingSubject(&r.ThreadProperties)),
+		Description: firstNonEmpty(r.ThreadProperties.Description, r.Properties.Description),
 	}
 	c.Type = classifyChat(r)
 	for _, m := range r.Members {
