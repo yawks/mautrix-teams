@@ -33,6 +33,7 @@ type SendOptions struct {
 	ParentID        string
 	Mentions        []Mention
 	Attachments     []Attachment
+	SharedFiles     []SharedFile
 	ClientMessageID string
 	DisplayName     string
 }
@@ -104,9 +105,10 @@ func (c *Client) SendMessage(ctx context.Context, threadID, content string, opts
 // The itemid indexes into the inline <span itemtype=".../Mention"> tags in
 // the content body.
 func buildProperties(opts SendOptions) any {
-	if len(opts.Mentions) == 0 {
+	if len(opts.Mentions) == 0 && len(opts.SharedFiles) == 0 {
 		return nil
 	}
+	properties := make(map[string]any)
 	type mentionEntry struct {
 		Type        string `json:"@type"`
 		ItemID      int    `json:"itemid"`
@@ -125,14 +127,49 @@ func buildProperties(opts SendOptions) any {
 			MentionType: "person",
 		})
 	}
-	if len(entries) == 0 {
+	if len(entries) > 0 {
+		serialised, err := json.Marshal(entries)
+		if err == nil {
+			properties["mentions"] = string(serialised)
+		}
+	}
+	if len(opts.SharedFiles) > 0 {
+		type fileInfo struct {
+			FileURL  string `json:"fileUrl"`
+			SiteURL  string `json:"siteUrl"`
+			ShareURL string `json:"shareUrl"`
+			FileSize int64  `json:"fileSize,omitempty"`
+		}
+		type fileEntry struct {
+			Type      string   `json:"@type"`
+			ItemID    string   `json:"itemid"`
+			ID        string   `json:"id"`
+			FileName  string   `json:"fileName"`
+			FileSize  int64    `json:"fileSize,omitempty"`
+			FileInfo  fileInfo `json:"fileInfo"`
+			BaseURL   string   `json:"baseUrl"`
+			ObjectURL string   `json:"objectUrl"`
+		}
+		files := make([]fileEntry, 0, len(opts.SharedFiles))
+		for _, file := range opts.SharedFiles {
+			if file.Name == "" || file.FileURL == "" {
+				continue
+			}
+			files = append(files, fileEntry{
+				Type: "http://schema.skype.com/File", ItemID: file.ItemID, ID: file.ItemID,
+				FileName: file.Name, FileSize: file.Size, BaseURL: file.SiteURL, ObjectURL: file.FileURL,
+				FileInfo: fileInfo{FileURL: file.FileURL, SiteURL: file.SiteURL, ShareURL: file.ShareURL, FileSize: file.Size},
+			})
+		}
+		if serialised, err := json.Marshal(files); err == nil && len(files) > 0 {
+			properties["files"] = string(serialised)
+			properties["formatVariant"] = "TEAMS"
+		}
+	}
+	if len(properties) == 0 {
 		return nil
 	}
-	serialised, err := json.Marshal(entries)
-	if err != nil {
-		return nil
-	}
-	return map[string]any{"mentions": string(serialised)}
+	return properties
 }
 
 func (c *Client) EditMessage(ctx context.Context, threadID, messageID, newContent string, opts SendOptions) error {
@@ -315,6 +352,23 @@ type rawMessage struct {
 	ClientMessageID string         `json:"clientmessageid"`
 	ConversationID  string         `json:"conversationLink"`
 	Properties      map[string]any `json:"properties"`
+}
+
+// FetchMessage returns one message with its full properties. It is also used
+// to restore SharePoint file metadata after Loom restarts, when only the
+// durable message and public sharing URL remain in the local database.
+func (c *Client) FetchMessage(ctx context.Context, threadID, messageID string) (*Message, error) {
+	if threadID == "" || messageID == "" {
+		return nil, fmt.Errorf("empty thread or message id")
+	}
+	endpoint := c.chatSvcBaseURL() + "/v1/users/ME/conversations/" + url.PathEscape(threadID) +
+		"/messages/" + url.PathEscape(messageID)
+	var raw rawMessage
+	if err := c.doJSON(ctx, "GET", endpoint, AuthSkype, nil, &raw); err != nil {
+		return nil, err
+	}
+	message := convertRawMessage(&raw, threadID)
+	return &message, nil
 }
 
 func (c *Client) FetchHistory(ctx context.Context, threadID string, opts HistoryOptions) (*HistoryResult, error) {
@@ -626,7 +680,60 @@ func (c *Client) FetchSharedFile(ctx context.Context, f SharedFile) ([]byte, str
 	if err != nil {
 		return nil, "", err
 	}
-	return data, resp.Header.Get("Content-Type"), nil
+	contentType := resp.Header.Get("Content-Type")
+	if strings.HasPrefix(strings.ToLower(contentType), "text/html") && f.ShareURL != "" {
+		return c.FetchSharedLink(ctx, f.ShareURL)
+	}
+	return data, contentType, nil
+}
+
+// FetchSharedLink downloads a SharePoint sharing URL (/:b:/, /:x:/, ...).
+// Those URLs normally render an HTML viewer; download=1 plus the SharePoint
+// OAuth token resolves the actual file without browser cookies.
+func (c *Client) FetchSharedLink(ctx context.Context, sharedURL string) ([]byte, string, error) {
+	u, err := url.Parse(sharedURL)
+	if err != nil || u.Host == "" {
+		return nil, "", fmt.Errorf("parse SharePoint URL: %w", err)
+	}
+	token, err := c.freshSharePointToken(ctx, u.Host)
+	if err != nil {
+		return nil, "", err
+	}
+	query := u.Query()
+	query.Set("download", "1")
+	u.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-FORMS_BASED_AUTH_ACCEPTED", "f")
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("User-Agent", c.cfg.UserAgent)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, "", ErrUnauthorized
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, "", ErrNotFound
+	}
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, "", fmt.Errorf("SharePoint link fetch %s: %d %s", u.Redacted(), resp.StatusCode, string(body))
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024*1024))
+	if err != nil {
+		return nil, "", err
+	}
+	contentType := resp.Header.Get("Content-Type")
+	if strings.HasPrefix(strings.ToLower(contentType), "text/html") {
+		return nil, "", fmt.Errorf("SharePoint returned HTML instead of file data")
+	}
+	return data, contentType, nil
 }
 
 func sharedFileDownloadEndpoint(f SharedFile) (endpoint, host string, err error) {

@@ -50,6 +50,7 @@ type rawThreadProps struct {
 	Meeting            string `json:"meeting"`
 	UniqueRosterThread string `json:"uniquerosterthread"`
 	ProductThreadType  string `json:"productThreadType"`
+	PinnedItems        string `json:"pinnedItems"`
 }
 
 type rawMember struct {
@@ -978,6 +979,10 @@ func convertRawConversation(r *rawConversation) Chat {
 		Description: firstNonEmpty(r.ThreadProperties.Description, r.Properties.Description),
 	}
 	c.Type = classifyChat(r)
+	pinnedItems := firstNonEmpty(r.ThreadProperties.PinnedItems, r.Properties.PinnedItems)
+	if pinnedItems != "" {
+		_ = json.Unmarshal([]byte(pinnedItems), &c.PinnedItems)
+	}
 	for _, m := range r.Members {
 		mri := m.MRI
 		if mri == "" {

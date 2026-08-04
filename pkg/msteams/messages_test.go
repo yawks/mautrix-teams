@@ -110,6 +110,23 @@ func TestSendMessagePlainText(t *testing.T) {
 	}
 }
 
+func TestBuildPropertiesIncludesSharedFiles(t *testing.T) {
+	properties, ok := buildProperties(SendOptions{SharedFiles: []SharedFile{{
+		Name: "report.pdf", ItemID: "file-id", SiteURL: "https://example.sharepoint.com/personal/me",
+		FileURL: "https://example.sharepoint.com/personal/me/Documents/report.pdf", Size: 42,
+	}}}).(map[string]any)
+	if !ok {
+		t.Fatalf("buildProperties returned %T", properties)
+	}
+	files, ok := properties["files"].(string)
+	if !ok || !strings.Contains(files, `"fileName":"report.pdf"`) || !strings.Contains(files, `"itemid":"file-id"`) {
+		t.Fatalf("unexpected files property: %#v", properties["files"])
+	}
+	if properties["formatVariant"] != "TEAMS" {
+		t.Fatalf("formatVariant=%#v", properties["formatVariant"])
+	}
+}
+
 func TestDeleteMessage(t *testing.T) {
 	var hit bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

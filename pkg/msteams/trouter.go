@@ -658,6 +658,9 @@ func (c *Client) handleEventMessage(resourceType string, raw json.RawMessage) {
 		return
 	}
 	switch r.MessageType {
+	case "ThreadActivity/PinnedItemsUpdate":
+		c.emit(Event{Type: EventTypePinnedItems, ThreadID: threadID, Timestamp: ParseTeamsTime(r.ComposeTime)}, r.IMDisplayName)
+		return
 	case "Control/Typing":
 		c.emit(Event{Type: EventTypeTyping, ThreadID: threadID, TypingFrom: fromMRI, Timestamp: time.Now()}, r.IMDisplayName)
 		return

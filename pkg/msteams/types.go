@@ -53,6 +53,14 @@ type Chat struct {
 	LastUpdated time.Time `json:"lastUpdatedTime,omitempty"`
 	// TeamID is set when Type == ChatTypeChannel.
 	TeamID string `json:"teamId,omitempty"`
+	// PinnedItems is stored by Teams as JSON in the thread's pinnedItems
+	// property. Items are shared with every participant in the chat.
+	PinnedItems []PinnedConversationItem `json:"pinnedItems,omitempty"`
+}
+
+type PinnedConversationItem struct {
+	ItemID   string `json:"itemId"`
+	ItemType string `json:"itemType"`
 }
 
 type Team struct {
@@ -155,6 +163,7 @@ const (
 	EventTypeReadReceipt   EventType = "readReceipt"
 	EventTypeChatUpdate    EventType = "chatUpdate"
 	EventTypeCall          EventType = "call"
+	EventTypePinnedItems   EventType = "pinnedItems"
 )
 
 type Event struct {
