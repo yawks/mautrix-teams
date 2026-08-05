@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"golang.org/x/net/html"
 )
@@ -60,6 +61,7 @@ var (
 	amsVideoRegex     = regexp.MustCompile(`(?is)<video[^>]+itemtype=["']http://schema\.skype\.com/AMSVideo["'][^>]*>([^<]*)</video>`)
 	attrSrcRegex      = regexp.MustCompile(`(?i)\bsrc=["']([^"']+)["']`)
 	attrAltRegex      = regexp.MustCompile(`(?i)\balt=["']([^"']+)["']`)
+	attrItemIDRegex   = regexp.MustCompile(`(?i)\bitemid=["']([^"']+)["']`)
 	attrUriRegex      = regexp.MustCompile(`(?i)\buri=["']([^"']+)["']`)
 	attrNameRegex     = regexp.MustCompile(`(?i)<OriginalName\s+v=["']([^"']+)["']`)
 	attrWidthRegex    = regexp.MustCompile(`(?i)\bwidth=["']([0-9]+)["']`)
@@ -189,8 +191,31 @@ func ReplaceInlineEmojis(body string) string {
 		return body
 	}
 	return inlineEmojiRegex.ReplaceAllStringFunc(body, func(match string) string {
-		return firstSubmatch(attrAltRegex, match)
+		alt := strings.TrimSpace(firstSubmatch(attrAltRegex, match))
+		itemID := strings.TrimSpace(firstSubmatch(attrItemIDRegex, match))
+		if alt != "" && containsEmojiGlyph(alt) {
+			return alt
+		}
+		if itemID != "" {
+			if decoded := DecodeReactionKey(itemID); decoded != itemID {
+				return decoded
+			}
+		}
+		if alt != "" {
+			return alt
+		}
+		return ""
 	})
+}
+
+func containsEmojiGlyph(value string) bool {
+	for _, r := range value {
+		if unicode.Is(unicode.So, r) || r == '\u200d' || r == '\ufe0f' ||
+			(r >= 0x1f1e6 && r <= 0x1f1ff) || (r >= 0x1f3fb && r <= 0x1f3ff) {
+			return true
+		}
+	}
+	return false
 }
 
 func firstSubmatch(re *regexp.Regexp, s string) string {

@@ -24,7 +24,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
+	"time"
 )
 
 type conversationsResponse struct {
@@ -834,16 +836,26 @@ func (c *Client) CreateGroupChat(ctx context.Context, topic string, members []st
 	}
 	addMember(c.cfg.UserMRI, "Admin")
 	for _, mri := range members {
-		addMember(mri, "User")
+		// /v1/threads expects every initial chat participant to be an Admin.
+		// "User" is valid for later roster additions but the service rejects it
+		// with 403 in the create payload.
+		addMember(mri, "Admin")
+	}
+	properties := map[string]any{
+		"threadType":         "chat",
+		"chatFilesIndexId":   "2",
+		"uniquerosterthread": "false",
+		"fixedRoster":        "true",
+	}
+	if topic != "" {
+		properties["topic"] = topic
 	}
 	payload := map[string]any{
-		"members": requestMembers,
-		"properties": map[string]any{
-			"threadType": "Chat", "templateType": "Chat", "chatType": "group", "topic": topic,
-		},
+		"members": requestMembers, "properties": properties,
 	}
 	var raw rawConversation
-	if err := c.doJSON(ctx, http.MethodPost, c.chatSvcBaseURL()+"/v1/threads", AuthSkype, payload, &raw); err != nil {
+	headers, err := c.doJSONHeaders(ctx, http.MethodPost, c.chatSvcBaseURL()+"/v1/threads", AuthSkype, payload, &raw)
+	if err != nil {
 		return nil, fmt.Errorf("create group chat: %w", err)
 	}
 	if raw.ID != "" {
@@ -854,16 +866,46 @@ func (c *Client) CreateGroupChat(ctx context.Context, topic string, members []st
 		}
 		return &chat, nil
 	}
-	// Some regional deployments return 201 with an empty body. Resolve the
-	// newly-created thread from the refreshed conversation list.
-	chats, err := c.ListChats(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("resolve created group chat: %w", err)
-	}
-	for i := len(chats) - 1; i >= 0; i-- {
-		if chats[i].Type == ChatTypeGroup && strings.EqualFold(strings.TrimSpace(chats[i].Topic), topic) && chatHasMembers(chats[i], seen) {
-			return &chats[i], nil
+	if location := strings.TrimSpace(headers.Get("Location")); location != "" {
+		if parsed, parseErr := url.Parse(location); parseErr == nil {
+			threadID := strings.TrimSpace(path.Base(strings.TrimRight(parsed.Path, "/")))
+			if threadID != "" && threadID != "." && threadID != "threads" {
+				if detailed, detailErr := c.GetChat(ctx, threadID); detailErr == nil && detailed != nil {
+					detailed.Type = ChatTypeGroup
+					if detailed.Topic == "" {
+						detailed.Topic = topic
+					}
+					return detailed, nil
+				}
+				return &Chat{ID: threadID, Type: ChatTypeGroup, Topic: topic}, nil
+			}
 		}
+	}
+	// Some regional deployments return 201 with an empty body. Resolve the
+	// newly-created thread from the eventually-consistent conversation list.
+	var lastErr error
+	for attempt := 0; attempt < 6; attempt++ {
+		if attempt > 0 {
+			delay := time.Duration(1<<(attempt-1)) * 500 * time.Millisecond
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+		chats, listErr := c.ListChats(ctx)
+		if listErr != nil {
+			lastErr = listErr
+			continue
+		}
+		for i := len(chats) - 1; i >= 0; i-- {
+			if chats[i].Type == ChatTypeGroup && strings.EqualFold(strings.TrimSpace(chats[i].Topic), topic) && chatHasMembers(chats[i], seen) {
+				return &chats[i], nil
+			}
+		}
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("resolve created group chat: %w", lastErr)
 	}
 	return nil, fmt.Errorf("group chat was created but its thread id could not be resolved")
 }

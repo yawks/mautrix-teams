@@ -955,3 +955,184 @@ func parsePropertiesMentions(props map[string]any) []Mention {
 	}
 	return out
 }
+
+// --- Scheduled Drafts -------------------------------------------------------
+
+// scheduleDraftRequest is the POST body for POST /v1/users/ME/drafts.
+// The outer fields mirror what the Teams web client sends exactly.
+type scheduleDraftRequest struct {
+	DraftDetails  struct {
+		SendAt string `json:"sendAt"` // Unix milliseconds as string
+	} `json:"draftDetails"`
+	DraftType     string              `json:"draftType"`
+	InnerThreadID string              `json:"innerThreadId"`
+	Message       scheduleDraftMsgOut `json:"message"`
+}
+
+// scheduleDraftMsgOut is the nested message body inside scheduleDraftRequest.
+type scheduleDraftMsgOut struct {
+	ID                string `json:"id"`
+	Type              string `json:"type"`
+	ConversationID    string `json:"conversationid"`
+	ConversationLink  string `json:"conversationLink"`
+	From              string `json:"from"`
+	FromUserID        string `json:"fromUserId"`
+	ComposeTime       string `json:"composetime"`
+	OriginalArrTime   string `json:"originalarrivaltime"`
+	Content           string `json:"content"`
+	MessageType       string `json:"messagetype"`
+	ContentType       string `json:"contenttype"`
+	IMDisplayName     string `json:"imdisplayname"`
+	ClientMessageID   string `json:"clientmessageid"`
+	CallID            string `json:"callId"`
+	State             int    `json:"state"`
+	Version           string `json:"version"`
+	AMSReferences     []any  `json:"amsreferences"`
+	Properties        struct {
+		Importance    string `json:"importance"`
+		Subject       string `json:"subject"`
+		Title         string `json:"title"`
+		Cards         string `json:"cards"`
+		Links         string `json:"links"`
+		Mentions      string `json:"mentions"`
+		OnBehalfOf    any    `json:"onbehalfof"`
+		Files         string `json:"files"`
+		FormatVariant string `json:"formatVariant"`
+		DraftID       string `json:"draftId"`
+	} `json:"properties"`
+	CrossPostChannels []any  `json:"crossPostChannels"`
+	DraftDetails      struct {
+		SendAt string `json:"sendAt"` // ISO 8601
+	} `json:"draftDetails"`
+	ThreadType    string `json:"threadtype"`
+	InnerThreadID string `json:"innerThreadId"`
+}
+
+// draftListItem mirrors the flat structure returned by GET /v1/users/ME/drafts.
+// Fields are at the top level (not nested under "message" like the POST body).
+type draftListItem struct {
+	ID              string `json:"id"`              // server-assigned ID — use for DELETE
+	ClientMessageID string `json:"clientmessageid"` // client-generated ID
+	DraftType       string `json:"draftType"`
+	InnerThreadID   string `json:"innerThreadId"`
+	Content         string `json:"content"`
+	IMDisplayName   string `json:"imdisplayname"`
+	ComposeTime     string `json:"composetime"`
+	DraftDetails    struct {
+		SendAt string `json:"sendAt"` // Unix milliseconds as string
+	} `json:"draftDetails"`
+	Properties struct {
+		DraftID    string `json:"draftId"`
+		DeleteTime any    `json:"deletetime"` // non-nil → soft-deleted, skip
+	} `json:"properties"`
+}
+
+type listDraftsResponse struct {
+	Drafts []draftListItem `json:"drafts"`
+}
+
+// ScheduledDraftItem is one entry returned by ListScheduledDrafts.
+type ScheduledDraftItem struct {
+	DraftID     string // server-assigned id, used for DeleteScheduledDraft
+	ThreadID    string
+	Content     string
+	DisplayName string
+	SendAt      time.Time
+	CreatedAt   time.Time
+}
+
+// ScheduleDraft creates a scheduled (future-delivery) draft via
+// POST /v1/users/ME/drafts. Returns the server-assigned draft ID.
+func (c *Client) ScheduleDraft(ctx context.Context, threadID, content, displayName string, sendAt time.Time) (string, error) {
+	if threadID == "" {
+		return "", fmt.Errorf("empty thread id")
+	}
+	clientMsgID := FormatTeamsTime(time.Now())
+	now := time.Now()
+	convLink := c.chatSvcBaseURL() + "/v1/users/ME/conversations/" + url.PathEscape(threadID)
+	var req scheduleDraftRequest
+	req.DraftDetails.SendAt = FormatTeamsTime(sendAt)
+	req.DraftType = "ScheduledDraft"
+	req.InnerThreadID = threadID
+	msg := &req.Message
+	msg.ID = "-1"
+	msg.Type = "Message"
+	msg.ConversationID = threadID
+	msg.ConversationLink = convLink
+	msg.From = c.cfg.UserMRI
+	msg.FromUserID = c.cfg.UserMRI
+	msg.ComposeTime = now.UTC().Format(time.RFC3339Nano)
+	msg.OriginalArrTime = now.UTC().Format(time.RFC3339Nano)
+	msg.Content = content
+	msg.MessageType = "RichText/Html"
+	msg.ContentType = "Text"
+	msg.IMDisplayName = displayName
+	msg.ClientMessageID = clientMsgID
+	msg.State = 0
+	msg.Version = "0"
+	msg.AMSReferences = []any{}
+	msg.Properties.Cards = "[]"
+	msg.Properties.Links = "[]"
+	msg.Properties.Mentions = "[]"
+	msg.Properties.Files = "[]"
+	msg.Properties.FormatVariant = "TEAMS"
+	msg.Properties.DraftID = clientMsgID
+	msg.CrossPostChannels = []any{}
+	msg.DraftDetails.SendAt = sendAt.UTC().Format(time.RFC3339Nano)
+	msg.ThreadType = "streamofdrafts"
+	msg.InnerThreadID = threadID
+
+	endpoint := c.chatSvcBaseURL() + "/v1/users/ME/drafts"
+	// Capture the response to extract the server-assigned id.
+	var resp draftListItem
+	if err := c.doJSON(ctx, "POST", endpoint, AuthSkype, req, &resp); err != nil {
+		return "", err
+	}
+	if resp.ID != "" {
+		return resp.ID, nil
+	}
+	return clientMsgID, nil
+}
+
+// ListScheduledDrafts returns all active ScheduledDraft entries for threadID.
+// The server returns all drafts across all conversations, so we filter
+// client-side. Soft-deleted drafts (properties.deletetime set) are skipped.
+func (c *Client) ListScheduledDrafts(ctx context.Context, threadID string) ([]ScheduledDraftItem, error) {
+	endpoint := c.chatSvcBaseURL() + "/v1/users/ME/drafts?draftType=ScheduledDraft"
+	var raw listDraftsResponse
+	if err := c.doJSON(ctx, "GET", endpoint, AuthSkype, nil, &raw); err != nil {
+		return nil, err
+	}
+	out := make([]ScheduledDraftItem, 0)
+	for _, d := range raw.Drafts {
+		if d.DraftType != "ScheduledDraft" {
+			continue
+		}
+		if d.InnerThreadID != threadID {
+			continue
+		}
+		// Skip soft-deleted drafts (deletetime is set in properties).
+		if d.Properties.DeleteTime != nil {
+			continue
+		}
+		item := ScheduledDraftItem{
+			DraftID:     d.ID,
+			ThreadID:    d.InnerThreadID,
+			Content:     d.Content,
+			DisplayName: d.IMDisplayName,
+			SendAt:      ParseTeamsTime(d.DraftDetails.SendAt),
+			CreatedAt:   ParseTeamsTime(d.ComposeTime),
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+// DeleteScheduledDraft cancels a scheduled draft by its server-assigned id.
+func (c *Client) DeleteScheduledDraft(ctx context.Context, draftID string) error {
+	if draftID == "" {
+		return fmt.Errorf("empty draft id")
+	}
+	endpoint := c.chatSvcBaseURL() + "/v1/users/ME/drafts/" + url.PathEscape(draftID)
+	return c.doJSON(ctx, "DELETE", endpoint, AuthSkype, nil, nil)
+}

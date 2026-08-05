@@ -118,8 +118,15 @@ func TestCreateGroupChat(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if len(body.Members) != 3 || body.Properties["topic"] != "Planning" {
+		if len(body.Members) != 3 || body.Properties["topic"] != "Planning" ||
+			body.Properties["threadType"] != "chat" || body.Properties["chatFilesIndexId"] != "2" ||
+			body.Properties["fixedRoster"] != "true" || body.Properties["uniquerosterthread"] != "false" {
 			t.Fatalf("unexpected create payload: %+v", body)
+		}
+		for _, member := range body.Members {
+			if member.Role != "Admin" {
+				t.Fatalf("initial member role=%q, want Admin: %+v", member.Role, body.Members)
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -137,6 +144,66 @@ func TestCreateGroupChat(t *testing.T) {
 	}
 	if chat.ID != "19:new@thread.v2" || chat.Type != ChatTypeGroup {
 		t.Fatalf("unexpected chat: %+v", chat)
+	}
+}
+
+func TestCreateUnnamedGroupChatOmitsTopic(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Properties map[string]any `json:"properties"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := body.Properties["topic"]; exists {
+			t.Fatalf("unnamed group payload contains topic: %+v", body.Properties)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"19:unnamed@thread.v2","members":[{"id":"8:orgid:me"},{"id":"8:orgid:alice"},{"id":"8:orgid:bob"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c, err := NewClient(ClientConfig{UserMRI: "8:orgid:me", SkypeToken: "skype-value", Endpoints: Endpoints{ChatSvcBase: srv.URL}, Logger: zerolog.Nop()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	chat, err := c.CreateGroupChat(context.Background(), "", []string{"8:orgid:alice", "8:orgid:bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.ID != "19:unnamed@thread.v2" || chat.Topic != "" {
+		t.Fatalf("unexpected unnamed chat: %+v", chat)
+	}
+}
+
+func TestCreateGroupChatUsesLocationHeaderWhenBodyIsEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/threads/19:from-location@thread.v2" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"19:from-location@thread.v2","members":[{"id":"8:orgid:me","role":"Admin"},{"id":"8:orgid:alice","role":"Admin"},{"id":"8:orgid:bob","role":"Admin"}]}`))
+			return
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/threads" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Location", "https://chat.example/v1/threads/19%3Afrom-location%40thread.v2")
+		w.WriteHeader(http.StatusCreated)
+	}))
+	t.Cleanup(srv.Close)
+	// httptest's URL isn't known inside the handler declaration; an absolute
+	// placeholder is sufficient because only the Location path is relevant.
+	c, err := NewClient(ClientConfig{UserMRI: "8:orgid:me", SkypeToken: "skype-value", Endpoints: Endpoints{ChatSvcBase: srv.URL}, Logger: zerolog.Nop()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	chat, err := c.CreateGroupChat(context.Background(), "", []string{"8:orgid:alice", "8:orgid:bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.ID != "19:from-location@thread.v2" || len(chat.Members) != 3 {
+		t.Fatalf("unexpected resolved chat: %+v", chat)
 	}
 }
 

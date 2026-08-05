@@ -256,10 +256,40 @@ func (c *Client) Connect(ctx context.Context) error {
 		return fmt.Errorf("refresh tokens: %w", err)
 	}
 	if err := c.startTrouter(ctx); err != nil {
-		return fmt.Errorf("start trouter: %w", err)
+		// Trouter is Microsoft's real-time notification transport. A temporary
+		// 502/503 here must not make the whole provider unusable: history and
+		// sending use the chat HTTP service and remain available. Bootstrap the
+		// socket in the background with an interruptible exponential backoff.
+		c.log.Warn().Err(err).Msg("Initial Trouter connection failed; retrying in background")
+		c.wg.Add(1)
+		go c.retryStartTrouter()
 	}
 	c.connected.Store(true)
 	return nil
+}
+
+func (c *Client) retryStartTrouter() {
+	defer c.wg.Done()
+	delay := 2 * time.Second
+	for {
+		select {
+		case <-c.stopCtx.Done():
+			return
+		case <-time.After(delay):
+		}
+		if err := c.startTrouter(c.stopCtx); err == nil {
+			c.log.Info().Msg("Trouter connection recovered")
+			return
+		} else {
+			c.log.Warn().Err(err).Dur("retry_in", delay).Msg("Trouter connection retry failed")
+		}
+		if delay < 30*time.Second {
+			delay *= 2
+			if delay > 30*time.Second {
+				delay = 30 * time.Second
+			}
+		}
+	}
 }
 
 func (c *Client) refreshAllTokens(ctx context.Context) error {

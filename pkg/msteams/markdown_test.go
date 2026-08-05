@@ -39,6 +39,13 @@ func TestInlineEmojiNotAnAttachment(t *testing.T) {
 	}
 }
 
+func TestInlineEmojiFallsBackToTeamsItemID(t *testing.T) {
+	body := `<img itemtype="http://schema.skype.com/Emoji" itemid="wink" alt="(wink)" src="wink.png">`
+	if got := ReplaceInlineEmojis(body); got != "😉" {
+		t.Fatalf("ReplaceInlineEmojis=%q, want wink glyph", got)
+	}
+}
+
 // TestStickerStillExtracted confirms the regex split didn't accidentally drop
 // real standalone image types. Stickers/Giphy/FlikMsg still become parts.
 func TestStickerStillExtracted(t *testing.T) {
