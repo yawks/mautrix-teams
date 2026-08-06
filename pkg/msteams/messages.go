@@ -205,6 +205,14 @@ func (c *Client) DeleteMessage(ctx context.Context, threadID, messageID string) 
 }
 
 func (c *Client) SendTyping(ctx context.Context, threadID string) error {
+	return c.sendTypingControl(ctx, threadID, "Control/Typing")
+}
+
+func (c *Client) SendClearTyping(ctx context.Context, threadID string) error {
+	return c.sendTypingControl(ctx, threadID, "Control/ClearTyping")
+}
+
+func (c *Client) sendTypingControl(ctx context.Context, threadID, messageType string) error {
 	if threadID == "" {
 		return nil
 	}
@@ -213,7 +221,7 @@ func (c *Client) SendTyping(ctx context.Context, threadID string) error {
 	body := map[string]string{
 		"content":     "",
 		"contenttype": "Application/Message",
-		"messagetype": "Control/Typing",
+		"messagetype": messageType,
 	}
 	endpoint := c.chatSvcBaseURL() + "/v1/users/ME/conversations/" + url.PathEscape(threadID) + "/messages"
 	return c.doJSON(ctx, "POST", endpoint, AuthSkype, body, nil)
@@ -961,7 +969,7 @@ func parsePropertiesMentions(props map[string]any) []Mention {
 // scheduleDraftRequest is the POST body for POST /v1/users/ME/drafts.
 // The outer fields mirror what the Teams web client sends exactly.
 type scheduleDraftRequest struct {
-	DraftDetails  struct {
+	DraftDetails struct {
 		SendAt string `json:"sendAt"` // Unix milliseconds as string
 	} `json:"draftDetails"`
 	DraftType     string              `json:"draftType"`
@@ -971,24 +979,24 @@ type scheduleDraftRequest struct {
 
 // scheduleDraftMsgOut is the nested message body inside scheduleDraftRequest.
 type scheduleDraftMsgOut struct {
-	ID                string `json:"id"`
-	Type              string `json:"type"`
-	ConversationID    string `json:"conversationid"`
-	ConversationLink  string `json:"conversationLink"`
-	From              string `json:"from"`
-	FromUserID        string `json:"fromUserId"`
-	ComposeTime       string `json:"composetime"`
-	OriginalArrTime   string `json:"originalarrivaltime"`
-	Content           string `json:"content"`
-	MessageType       string `json:"messagetype"`
-	ContentType       string `json:"contenttype"`
-	IMDisplayName     string `json:"imdisplayname"`
-	ClientMessageID   string `json:"clientmessageid"`
-	CallID            string `json:"callId"`
-	State             int    `json:"state"`
-	Version           string `json:"version"`
-	AMSReferences     []any  `json:"amsreferences"`
-	Properties        struct {
+	ID               string `json:"id"`
+	Type             string `json:"type"`
+	ConversationID   string `json:"conversationid"`
+	ConversationLink string `json:"conversationLink"`
+	From             string `json:"from"`
+	FromUserID       string `json:"fromUserId"`
+	ComposeTime      string `json:"composetime"`
+	OriginalArrTime  string `json:"originalarrivaltime"`
+	Content          string `json:"content"`
+	MessageType      string `json:"messagetype"`
+	ContentType      string `json:"contenttype"`
+	IMDisplayName    string `json:"imdisplayname"`
+	ClientMessageID  string `json:"clientmessageid"`
+	CallID           string `json:"callId"`
+	State            int    `json:"state"`
+	Version          string `json:"version"`
+	AMSReferences    []any  `json:"amsreferences"`
+	Properties       struct {
 		Importance    string `json:"importance"`
 		Subject       string `json:"subject"`
 		Title         string `json:"title"`
@@ -1000,7 +1008,7 @@ type scheduleDraftMsgOut struct {
 		FormatVariant string `json:"formatVariant"`
 		DraftID       string `json:"draftId"`
 	} `json:"properties"`
-	CrossPostChannels []any  `json:"crossPostChannels"`
+	CrossPostChannels []any `json:"crossPostChannels"`
 	DraftDetails      struct {
 		SendAt string `json:"sendAt"` // ISO 8601
 	} `json:"draftDetails"`
