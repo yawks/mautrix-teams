@@ -661,6 +661,14 @@ func (c *Client) handleEventMessage(resourceType string, raw json.RawMessage) {
 	case "ThreadActivity/PinnedItemsUpdate":
 		c.emit(Event{Type: EventTypePinnedItems, ThreadID: threadID, Timestamp: ParseTeamsTime(r.ComposeTime)}, r.IMDisplayName)
 		return
+	case "ThreadActivity/AddMember", "ThreadActivity/DeleteMember",
+		"ThreadActivity/MemberJoined", "ThreadActivity/MemberLeft",
+		"ThreadActivity/TopicUpdate":
+		// Membership changes are the realtime signal that the authenticated user
+		// was added to a chat. Surface them separately from messages so callers can
+		// fetch and persist the newly-visible conversation immediately.
+		c.emit(Event{Type: EventTypeChatUpdate, ThreadID: threadID, Timestamp: ParseTeamsTime(r.ComposeTime)}, r.IMDisplayName)
+		return
 	case "Control/Typing":
 		c.emit(Event{Type: EventTypeTyping, ThreadID: threadID, TypingFrom: fromMRI, Timestamp: time.Now()}, r.IMDisplayName)
 		return

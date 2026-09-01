@@ -53,6 +53,7 @@ type rawThreadProps struct {
 	UniqueRosterThread string `json:"uniquerosterthread"`
 	ProductThreadType  string `json:"productThreadType"`
 	PinnedItems        string `json:"pinnedItems"`
+	ConsumptionHorizon string `json:"consumptionhorizon"`
 }
 
 type rawMember struct {
@@ -1016,9 +1017,10 @@ func chatHasMembers(chat Chat, wanted map[string]bool) bool {
 
 func convertRawConversation(r *rawConversation) Chat {
 	c := Chat{
-		ID:          r.ID,
-		Topic:       firstNonEmpty(r.ThreadProperties.Topic, r.Properties.Topic, meetingSubject(&r.Properties), meetingSubject(&r.ThreadProperties)),
-		Description: firstNonEmpty(r.ThreadProperties.Description, r.Properties.Description),
+		ID:                 r.ID,
+		Topic:              firstNonEmpty(r.ThreadProperties.Topic, r.Properties.Topic, meetingSubject(&r.Properties), meetingSubject(&r.ThreadProperties)),
+		Description:        firstNonEmpty(r.ThreadProperties.Description, r.Properties.Description),
+		ConsumptionHorizon: firstNonEmpty(r.ThreadProperties.ConsumptionHorizon, r.Properties.ConsumptionHorizon),
 	}
 	c.Type = classifyChat(r)
 	pinnedItems := firstNonEmpty(r.ThreadProperties.PinnedItems, r.Properties.PinnedItems)

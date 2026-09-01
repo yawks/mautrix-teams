@@ -56,6 +56,9 @@ type Chat struct {
 	// PinnedItems is stored by Teams as JSON in the thread's pinnedItems
 	// property. Items are shared with every participant in the chat.
 	PinnedItems []PinnedConversationItem `json:"pinnedItems,omitempty"`
+	// ConsumptionHorizon is the per-user remote read cursor returned by the
+	// chat service ("message-id;timestamp;message-id").
+	ConsumptionHorizon string `json:"consumptionHorizon,omitempty"`
 }
 
 type PinnedConversationItem struct {

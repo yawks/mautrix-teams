@@ -29,7 +29,7 @@ const listChatsFixture = `{
   "conversations": [
     {
       "id": "19:abc@thread.v2",
-      "threadProperties": {"topic": "Team planning"},
+      "threadProperties": {"topic": "Team planning", "consumptionhorizon": "1700000000000;1700000000000;1700000000000"},
       "members": [
         {"id": "8:orgid:alice", "role": "Admin"},
         {"id": "8:orgid:bob", "role": "User"}
@@ -77,6 +77,9 @@ func TestListChats(t *testing.T) {
 	chats, err := c.ListChats(context.Background())
 	if err != nil {
 		t.Fatalf("ListChats: %v", err)
+	}
+	if chats[0].ConsumptionHorizon != "1700000000000;1700000000000;1700000000000" {
+		t.Fatalf("consumption horizon was not preserved: %q", chats[0].ConsumptionHorizon)
 	}
 	if len(chats) != 3 {
 		t.Fatalf("got %d chats, want 3", len(chats))
