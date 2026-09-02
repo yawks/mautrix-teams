@@ -279,6 +279,7 @@ func (c *Client) retryStartTrouter() {
 		}
 		if err := c.startTrouter(c.stopCtx); err == nil {
 			c.log.Info().Msg("Trouter connection recovered")
+			c.emit(Event{Type: EventTypeHistorySync, Timestamp: time.Now().Add(-24 * time.Hour)}, "")
 			return
 		} else {
 			c.log.Warn().Err(err).Dur("retry_in", delay).Msg("Trouter connection retry failed")

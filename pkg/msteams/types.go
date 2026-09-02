@@ -167,6 +167,9 @@ const (
 	EventTypeChatUpdate    EventType = "chatUpdate"
 	EventTypeCall          EventType = "call"
 	EventTypePinnedItems   EventType = "pinnedItems"
+	// EventTypeHistorySync asks consumers to repair a possible gap in chat
+	// history. Timestamp is the earliest point that should be audited.
+	EventTypeHistorySync EventType = "historySync"
 )
 
 type Event struct {

@@ -212,6 +212,7 @@ func (c *Client) runTrouter(conn *websocket.Conn, info *trouterInfo, endpoint st
 	defer c.wg.Done()
 	for {
 		err := c.trouterSession1(conn, info, endpoint)
+		disconnectedAt := time.Now()
 		conn.Close(websocket.StatusNormalClosure, "")
 		if c.closed.Load() {
 			return
@@ -244,6 +245,9 @@ func (c *Client) runTrouter(conn *websocket.Conn, info *trouterInfo, endpoint st
 		conn = newConn
 		info = newInfo
 		c.trouterSURL.Store(&info.SURL)
+		// HTTP history is authoritative. Audit from just before the socket went
+		// away so notifications lost during the reconnect cannot leave a hole.
+		c.emit(Event{Type: EventTypeHistorySync, Timestamp: disconnectedAt.Add(-5 * time.Minute)}, "")
 	}
 }
 
@@ -407,7 +411,11 @@ func (c *Client) handleTrouterEvent(payload []byte) {
 		return
 	}
 	if ev.Name == "trouter.message_loss" {
-		c.log.Warn().Msg("Trouter signalled message_loss; clients should re-sync chat history")
+		c.log.Warn().Msg("Trouter signalled message_loss; requesting chat history repair")
+		// Trouter does not report the beginning of the loss window. A day is a
+		// conservative bounded audit and remains cheap because storage upserts by
+		// Teams message ID.
+		c.emit(Event{Type: EventTypeHistorySync, Timestamp: time.Now().Add(-24 * time.Hour)}, "")
 	}
 }
 
