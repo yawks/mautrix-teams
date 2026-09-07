@@ -87,6 +87,85 @@ func TestSendMessage(t *testing.T) {
 	}
 }
 
+func TestFetchAttachmentRefreshesMissingSkypeToken(t *testing.T) {
+	var attachmentRequests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/authz":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"tokens":{"skypeToken":"skype-refreshed","expiresIn":3600}}`))
+		case "/attachment":
+			attachmentRequests++
+			if got := r.Header.Get("Authorization"); got != "skype_token skype-refreshed" {
+				t.Errorf("Authorization = %q", got)
+			}
+			w.Header().Set("Content-Type", "audio/ogg")
+			_, _ = w.Write([]byte("OggSdata"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(ClientConfig{
+		UserMRI: "8:orgid:me", AuthToken: "bearer-value", Logger: zerolog.Nop(),
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	c.authzURLForTest = srv.URL + "/authz"
+
+	data, contentType, err := c.FetchAttachment(context.Background(), srv.URL+"/attachment")
+	if err != nil {
+		t.Fatalf("FetchAttachment: %v", err)
+	}
+	if string(data) != "OggSdata" || contentType != "audio/ogg" {
+		t.Fatalf("data=%q contentType=%q", data, contentType)
+	}
+	if attachmentRequests != 1 {
+		t.Fatalf("attachment requests=%d, want 1", attachmentRequests)
+	}
+}
+
+func TestFetchAttachmentRefreshesSkypeTokenAfterUnauthorized(t *testing.T) {
+	var attachmentRequests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/authz":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"tokens":{"skypeToken":"skype-refreshed","expiresIn":3600}}`))
+		case "/attachment":
+			attachmentRequests++
+			if r.Header.Get("Authorization") != "skype_token skype-refreshed" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			_, _ = w.Write([]byte("audio-data"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(ClientConfig{
+		UserMRI: "8:orgid:me", AuthToken: "bearer-value", SkypeToken: "stale", Logger: zerolog.Nop(),
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	c.authzURLForTest = srv.URL + "/authz"
+
+	data, _, err := c.FetchAttachment(context.Background(), srv.URL+"/attachment")
+	if err != nil {
+		t.Fatalf("FetchAttachment: %v", err)
+	}
+	if string(data) != "audio-data" || attachmentRequests != 2 {
+		t.Fatalf("data=%q attachment requests=%d", data, attachmentRequests)
+	}
+}
+
 func TestSendMessagePlainText(t *testing.T) {
 	var captured sendMessageRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

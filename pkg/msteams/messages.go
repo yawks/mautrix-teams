@@ -621,33 +621,51 @@ func (c *Client) FetchAttachment(ctx context.Context, attachmentURL string) ([]b
 	if attachmentURL == "" {
 		return nil, "", fmt.Errorf("empty url")
 	}
+	if err := c.ensureFreshTokens(ctx, false, true); err != nil {
+		return nil, "", err
+	}
 	skype := c.skypeTokenValue()
 	if skype == "" {
-		return nil, "", ErrUnauthorized
+		if err := c.RefreshSkypeToken(ctx); err != nil {
+			return nil, "", err
+		}
+		skype = c.skypeTokenValue()
 	}
+	data, contentType, status, err := c.fetchAttachmentOnce(ctx, attachmentURL, skype)
+	if err == nil || status != http.StatusUnauthorized {
+		return data, contentType, err
+	}
+	if err := c.RefreshSkypeToken(ctx); err != nil {
+		return nil, "", fmt.Errorf("refresh skype token after AMS 401: %w", err)
+	}
+	data, contentType, _, err = c.fetchAttachmentOnce(ctx, attachmentURL, c.skypeTokenValue())
+	return data, contentType, err
+}
+
+func (c *Client) fetchAttachmentOnce(ctx context.Context, attachmentURL, skype string) ([]byte, string, int, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", attachmentURL, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	req.Header.Set("Authorization", "skype_token "+skype)
 	req.Header.Set("User-Agent", c.cfg.UserAgent)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, "", ErrNotFound
+		return nil, "", resp.StatusCode, ErrNotFound
 	}
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, "", fmt.Errorf("ams fetch %s: %d %s", attachmentURL, resp.StatusCode, string(body))
+		return nil, "", resp.StatusCode, fmt.Errorf("ams fetch %s: %d %s", attachmentURL, resp.StatusCode, string(body))
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024*1024))
 	if err != nil {
-		return nil, "", err
+		return nil, "", resp.StatusCode, err
 	}
-	return data, resp.Header.Get("Content-Type"), nil
+	return data, resp.Header.Get("Content-Type"), resp.StatusCode, nil
 }
 
 func (c *Client) FetchSharedFile(ctx context.Context, f SharedFile) ([]byte, string, error) {
