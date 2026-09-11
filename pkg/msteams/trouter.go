@@ -671,7 +671,7 @@ func (c *Client) handleEventMessage(resourceType string, raw json.RawMessage) {
 		return
 	case "ThreadActivity/AddMember", "ThreadActivity/DeleteMember",
 		"ThreadActivity/MemberJoined", "ThreadActivity/MemberLeft",
-		"ThreadActivity/TopicUpdate":
+		"ThreadActivity/TopicUpdate", "ThreadActivity/PictureUpdate":
 		// Membership changes are the realtime signal that the authenticated user
 		// was added to a chat. Surface them separately from messages so callers can
 		// fetch and persist the newly-visible conversation immediately.

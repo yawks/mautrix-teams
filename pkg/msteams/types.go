@@ -49,6 +49,7 @@ type Chat struct {
 	Type        ChatType  `json:"chatType"`
 	Topic       string    `json:"topic,omitempty"`
 	Description string    `json:"description,omitempty"`
+	Picture     string    `json:"picture,omitempty"`
 	Members     []Member  `json:"members,omitempty"`
 	LastUpdated time.Time `json:"lastUpdatedTime,omitempty"`
 	// TeamID is set when Type == ChatTypeChannel.

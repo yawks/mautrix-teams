@@ -45,6 +45,7 @@ type rawConversation struct {
 // Mirrored under "threadProperties" by /conversations and "properties" by
 // /threads/<id>; meeting subject is JSON-in-JSON under "meeting".
 type rawThreadProps struct {
+	Picture            string `json:"picture"`
 	Topic              string `json:"topic"`
 	Description        string `json:"description"`
 	ChatType           string `json:"chatType"` // meeting, group, or empty
@@ -404,6 +405,23 @@ func (c *Client) FetchAvatar(ctx context.Context, mri string) ([]byte, string, e
 	}
 	selfOID := strings.TrimPrefix(c.cfg.UserMRI, "8:orgid:")
 	endpoint := c.mtBaseURL() + "/beta/users/" + url.PathEscape(selfOID) + "/profilepicturev2/" + mri
+	return c.fetchAvatarURL(ctx, endpoint)
+}
+
+// FetchChatAvatar follows the Teams web client's pictureV2 route. The picture
+// property is opaque except for its final @-separated document URL; credentials
+// are sent only to our configured Teams image service.
+func (c *Client) FetchChatAvatar(ctx context.Context, threadID, picture string) ([]byte, string, error) {
+	if threadID == "" || picture == "" || c.cfg.UserMRI == "" {
+		return nil, "", ErrNotFound
+	}
+	parts := strings.Split(picture, "@")
+	q := url.Values{"usersInfo": {"null"}, "documentUrl": {parts[len(parts)-1]}, "size": {"HR64x64"}}
+	endpoint := c.mtBaseURL() + "/beta/users/" + url.PathEscape(strings.TrimPrefix(c.cfg.UserMRI, "8:orgid:")) + "/threads/" + url.PathEscape(threadID) + "/properties/pictureV2?" + q.Encode()
+	return c.fetchAvatarURL(ctx, endpoint)
+}
+
+func (c *Client) fetchAvatarURL(ctx context.Context, endpoint string) ([]byte, string, error) {
 	if err := c.ensureFreshTokens(ctx, true, false); err != nil {
 		return nil, "", err
 	}
@@ -434,7 +452,7 @@ func (c *Client) FetchAvatar(ctx context.Context, mri string) ([]byte, string, e
 	}
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, "", fmt.Errorf("avatar fetch %s: %d %s", mri, resp.StatusCode, string(body))
+		return nil, "", fmt.Errorf("avatar fetch: %d %s", resp.StatusCode, string(body))
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
 	if err != nil {
@@ -1020,6 +1038,7 @@ func convertRawConversation(r *rawConversation) Chat {
 		ID:                 r.ID,
 		Topic:              firstNonEmpty(r.ThreadProperties.Topic, r.Properties.Topic, meetingSubject(&r.Properties), meetingSubject(&r.ThreadProperties)),
 		Description:        firstNonEmpty(r.ThreadProperties.Description, r.Properties.Description),
+		Picture:            firstNonEmpty(r.ThreadProperties.Picture, r.Properties.Picture),
 		ConsumptionHorizon: firstNonEmpty(r.ThreadProperties.ConsumptionHorizon, r.Properties.ConsumptionHorizon),
 	}
 	c.Type = classifyChat(r)
