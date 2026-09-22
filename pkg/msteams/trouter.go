@@ -702,10 +702,11 @@ func (c *Client) handleEventMessage(resourceType string, raw json.RawMessage) {
 			},
 		}, r.IMDisplayName)
 		return
-	case "Text", "RichText", "RichText/Html", "RichText/Media_GenericFile",
-		"RichText/Media_Card", "RichText/Media_FlikMsg":
+	case "Text", "RichText", "RichText/Html":
 	default:
-		return
+		if !strings.HasPrefix(r.MessageType, "RichText/Media_") {
+			return
+		}
 	}
 	// A content edit is marked by properties.edittime (skypeeditedid is unset on
 	// this service, and emotions rides along on both edits and reactions so can't

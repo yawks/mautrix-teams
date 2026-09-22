@@ -503,6 +503,9 @@ func (cl *CallLog) PortalThreadID(selfMRI string) string {
 }
 
 func isChatMessage(messageType string) bool {
+	if strings.HasPrefix(messageType, "RichText/Media_") {
+		return true
+	}
 	switch messageType {
 	case "", "Text", "RichText", "RichText/Html",
 		"RichText/UriObject",

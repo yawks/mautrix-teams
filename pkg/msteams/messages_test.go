@@ -262,6 +262,15 @@ func TestFetchHistory(t *testing.T) {
 	}
 }
 
+func TestVoiceMediaMessageIsIncludedInHistory(t *testing.T) {
+	if !isChatMessage("RichText/Media_Audio") {
+		t.Fatal("voice media message was filtered from history")
+	}
+	if isChatMessage("ThreadActivity/AddMember") {
+		t.Fatal("membership event treated as chat message")
+	}
+}
+
 func TestParseCallLogIncoming1on1(t *testing.T) {
 	props := map[string]any{
 		"call-log": `{"startTime":"2026-04-24T19:24:10.84Z","connectTime":"2026-04-24T19:24:12.35Z","endTime":"2026-04-24T19:24:30.80Z","callDirection":"incoming","callType":"twoParty","callState":"accepted","originator":"8:orgid:alice","target":"8:orgid:me","originatorParticipant":{"id":"8:orgid:alice","type":"default","displayName":"Alice"},"targetParticipant":{"id":"8:orgid:me","type":"default","displayName":"Me"},"callId":"abc","threadId":null}`,
