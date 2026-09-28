@@ -271,6 +271,16 @@ func TestVoiceMediaMessageIsIncludedInHistory(t *testing.T) {
 	}
 }
 
+func TestMeetingMetadataContentIsHidden(t *testing.T) {
+	content := `{"scopeId":"scope","callId":"call","iCalUid":"ical","meetingTenantId":"tenant","isExportedToOdsp":true}`
+	if !isMeetingMetadataContent(content) {
+		t.Fatal("meeting metadata was not detected")
+	}
+	if isMeetingMetadataContent(`{"scopeId":"scope","callId":"call"}`) {
+		t.Fatal("ordinary JSON was treated as meeting metadata")
+	}
+}
+
 func TestParseCallLogIncoming1on1(t *testing.T) {
 	props := map[string]any{
 		"call-log": `{"startTime":"2026-04-24T19:24:10.84Z","connectTime":"2026-04-24T19:24:12.35Z","endTime":"2026-04-24T19:24:30.80Z","callDirection":"incoming","callType":"twoParty","callState":"accepted","originator":"8:orgid:alice","target":"8:orgid:me","originatorParticipant":{"id":"8:orgid:alice","type":"default","displayName":"Alice"},"targetParticipant":{"id":"8:orgid:me","type":"default","displayName":"Me"},"callId":"abc","threadId":null}`,

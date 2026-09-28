@@ -414,7 +414,7 @@ func (c *Client) FetchHistory(ctx context.Context, threadID string, opts History
 		HasMore: next != "" && len(raw.Messages) > 0,
 	}
 	for _, m := range raw.Messages {
-		if !isChatMessage(m.MessageType) {
+		if !isChatMessage(m.MessageType) || isMeetingMetadataContent(m.Content) {
 			continue
 		}
 		out.Messages = append(out.Messages, convertRawMessage(&m, threadID))
@@ -516,6 +516,19 @@ func isChatMessage(messageType string) bool {
 		return true
 	}
 	return false
+}
+
+func isMeetingMetadataContent(content string) bool {
+	var metadata struct {
+		ScopeID         string `json:"scopeId"`
+		CallID          string `json:"callId"`
+		ICalUID         string `json:"iCalUid"`
+		MeetingTenantID string `json:"meetingTenantId"`
+	}
+	return strings.HasPrefix(strings.TrimSpace(content), "{") &&
+		json.Unmarshal([]byte(content), &metadata) == nil &&
+		metadata.ScopeID != "" && metadata.CallID != "" &&
+		metadata.ICalUID != "" && metadata.MeetingTenantID != ""
 }
 
 // UploadAttachment runs the three-step AMS flow: register object, PUT bytes,

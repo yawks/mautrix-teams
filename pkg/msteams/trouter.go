@@ -665,6 +665,9 @@ func (c *Client) handleEventMessage(resourceType string, raw json.RawMessage) {
 		c.handleCallLogMessage(r)
 		return
 	}
+	if isMeetingMetadataContent(r.Content) {
+		return
+	}
 	switch r.MessageType {
 	case "ThreadActivity/PinnedItemsUpdate":
 		c.emit(Event{Type: EventTypePinnedItems, ThreadID: threadID, Timestamp: ParseTeamsTime(r.ComposeTime)}, r.IMDisplayName)
