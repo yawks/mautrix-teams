@@ -87,6 +87,35 @@ func TestSendMessage(t *testing.T) {
 	}
 }
 
+func TestInvokeCardAction(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/agents/28:poll-bot/invoke" {
+			t.Errorf("wrong path: %q", r.URL.Path)
+		}
+		if got := r.Header.Get("Authentication"); got != "skypetoken=skype-value" {
+			t.Errorf("authentication = %q", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	err := newClientAt(t, srv.URL).InvokeCardAction(context.Background(), "19:chat@thread.v2", "123", "28:poll-bot", "Me", "Vote", map[string]any{"choice": "0,1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body["name"] != "messageback" || body["serverMessageId"] != "123" {
+		t.Fatalf("unexpected invoke body: %+v", body)
+	}
+	conversation := body["conversation"].(map[string]any)
+	if conversation["id"] != "19:chat@thread.v2;messageid=123" {
+		t.Fatalf("unexpected conversation: %+v", conversation)
+	}
+}
+
 func TestFetchAttachmentRefreshesMissingSkypeToken(t *testing.T) {
 	var attachmentRequests int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -272,7 +301,7 @@ func TestVoiceMediaMessageIsIncludedInHistory(t *testing.T) {
 }
 
 func TestMeetingMetadataContentIsHidden(t *testing.T) {
-	content := `{"scopeId":"scope","callId":"call","iCalUid":"ical","meetingTenantId":"tenant","isExportedToOdsp":true}`
+	content := `{"scopeId":"scope","storageId":"user\@tenant","callId":"call","iCalUid":"ical","meetingTenantId":"tenant","isExportedToOdsp":true}`
 	if !isMeetingMetadataContent(content) {
 		t.Fatal("meeting metadata was not detected")
 	}

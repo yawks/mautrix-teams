@@ -204,6 +204,24 @@ func (c *Client) DeleteMessage(ctx context.Context, threadID, messageID string) 
 	return c.doJSON(ctx, "DELETE", endpoint, AuthSkype, nil, nil)
 }
 
+func (c *Client) InvokeCardAction(ctx context.Context, threadID, messageID, agentMRI, displayName, title string, value map[string]any) error {
+	if threadID == "" || messageID == "" || !strings.HasPrefix(agentMRI, "28:") {
+		return fmt.Errorf("invalid card action target")
+	}
+	body := map[string]any{
+		"value":           value,
+		"conversation":    map[string]string{"id": threadID + ";messageid=" + messageID},
+		"clientMessageId": FormatTeamsTime(time.Now()),
+		"serverMessageId": messageID,
+		"messageType":     "RichText/Media_Card",
+		"name":            "messageback",
+		"imdisplayname":   displayName,
+		"complianceData":  map[string]any{"action": map[string]string{"type": "Action.Submit", "title": title}},
+	}
+	endpoint := c.chatSvcBaseURL() + "/v1/agents/" + url.PathEscape(agentMRI) + "/invoke"
+	return c.doJSON(ctx, "POST", endpoint, AuthSkype, body, nil)
+}
+
 func (c *Client) SendTyping(ctx context.Context, threadID string) error {
 	return c.sendTypingControl(ctx, threadID, "Control/Typing")
 }
@@ -519,16 +537,12 @@ func isChatMessage(messageType string) bool {
 }
 
 func isMeetingMetadataContent(content string) bool {
-	var metadata struct {
-		ScopeID         string `json:"scopeId"`
-		CallID          string `json:"callId"`
-		ICalUID         string `json:"iCalUid"`
-		MeetingTenantID string `json:"meetingTenantId"`
-	}
-	return strings.HasPrefix(strings.TrimSpace(content), "{") &&
-		json.Unmarshal([]byte(content), &metadata) == nil &&
-		metadata.ScopeID != "" && metadata.CallID != "" &&
-		metadata.ICalUID != "" && metadata.MeetingTenantID != ""
+	content = strings.TrimSpace(content)
+	return strings.HasPrefix(content, "{") &&
+		strings.Contains(content, `"scopeId":`) &&
+		strings.Contains(content, `"callId":`) &&
+		strings.Contains(content, `"iCalUid":`) &&
+		strings.Contains(content, `"meetingTenantId":`)
 }
 
 // UploadAttachment runs the three-step AMS flow: register object, PUT bytes,
