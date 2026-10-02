@@ -140,8 +140,10 @@ type SharedFile struct {
 	Name     string `json:"name"`
 	ItemID   string `json:"item_id"`
 	SiteURL  string `json:"site_url"`
+	SiteID   string `json:"site_id,omitempty"`
 	FileURL  string `json:"file_url"`
 	ShareURL string `json:"share_url"`
+	ShareID  string `json:"share_id,omitempty"`
 	Size     int64  `json:"size,omitempty"`
 }
 

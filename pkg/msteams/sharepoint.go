@@ -44,10 +44,12 @@ func (c *Client) UploadSharedFile(ctx context.Context, location SharedFile, name
 	type uploadResponse struct {
 		D struct {
 			UniqueID          string `json:"UniqueId"`
+			ListID            string `json:"ListId"`
 			ServerRelativeURL string `json:"ServerRelativeUrl"`
 			Name              string `json:"Name"`
 		} `json:"d"`
 		UniqueID          string `json:"UniqueId"`
+		ListID            string `json:"ListId"`
 		ServerRelativeURL string `json:"ServerRelativeUrl"`
 		Name              string `json:"Name"`
 	}
@@ -57,7 +59,7 @@ func (c *Client) UploadSharedFile(ctx context.Context, location SharedFile, name
 		actualName = numberedFileName(name, suffix)
 		endpoint := strings.TrimRight(location.SiteURL, "/") + "/_api/web/GetFolderByServerRelativeUrl('" +
 			url.PathEscape(strings.ReplaceAll(folder, "'", "''")) + "')/Files/Add(url='" +
-			url.PathEscape(strings.ReplaceAll(actualName, "'", "''")) + "',overwrite=false)"
+			url.PathEscape(strings.ReplaceAll(actualName, "'", "''")) + "',overwrite=false)?$select=ListId,UniqueId,ServerRelativeUrl,Name"
 		uploaded = uploadResponse{}
 		uploadErr := c.sharePointJSON(ctx, http.MethodPost, endpoint, token, digest, data, "application/octet-stream", &uploaded)
 		if uploadErr == nil {
@@ -71,17 +73,102 @@ func (c *Client) UploadSharedFile(ctx context.Context, location SharedFile, name
 		}
 	}
 	itemID := firstNonEmpty(uploaded.UniqueID, uploaded.D.UniqueID)
+	listID := firstNonEmpty(uploaded.ListID, uploaded.D.ListID)
 	serverPath := firstNonEmpty(uploaded.ServerRelativeURL, uploaded.D.ServerRelativeURL)
 	actualName = firstNonEmpty(uploaded.Name, uploaded.D.Name, actualName)
 	if serverPath == "" {
 		serverPath = path.Join(folder, actualName)
 	}
 	uploadedURL := site.Scheme + "://" + site.Host + serverPath
-	if err := c.shareSharePointFile(ctx, location.SiteURL, uploadedURL, token, digest, recipients); err != nil {
+	if _, err := c.shareSharePointFile(ctx, location.SiteURL, uploadedURL, token, digest, recipients); err != nil {
 		return nil, err
 	}
-	return &SharedFile{Name: actualName, ItemID: strings.Trim(itemID, "{}"), SiteURL: location.SiteURL,
-		FileURL: uploadedURL, ShareURL: uploadedURL, Size: int64(len(data))}, nil
+	shareURL, shareID, err := c.createSharePointLink(ctx, location.SiteURL, listID, itemID, token, digest)
+	if err != nil {
+		return nil, err
+	}
+	siteID, err := c.sharePointSiteID(ctx, location.SiteURL, token)
+	if err != nil {
+		return nil, err
+	}
+	return &SharedFile{Name: actualName, ItemID: strings.Trim(itemID, "{}"), SiteURL: location.SiteURL, SiteID: siteID,
+		FileURL: uploadedURL, ShareURL: shareURL, ShareID: shareID, Size: int64(len(data))}, nil
+}
+
+func (c *Client) sharePointSiteID(ctx context.Context, siteURL, token string) (string, error) {
+	var result struct {
+		ID string `json:"Id"`
+		D  struct {
+			ID string `json:"Id"`
+		} `json:"d"`
+	}
+	if err := c.sharePointJSON(ctx, http.MethodGet, strings.TrimRight(siteURL, "/")+"/_api/site?$select=Id",
+		token, "", nil, "application/json", &result); err != nil {
+		return "", fmt.Errorf("get SharePoint site ID: %w", err)
+	}
+	id := strings.Trim(firstNonEmpty(result.ID, result.D.ID), "{}")
+	if id == "" {
+		return "", fmt.Errorf("SharePoint returned no site ID")
+	}
+	return id, nil
+}
+
+func (c *Client) createSharePointLink(ctx context.Context, siteURL, listID, itemID, token, digest string) (string, string, error) {
+	if listID == "" || itemID == "" {
+		return "", "", fmt.Errorf("SharePoint upload returned no list or item ID")
+	}
+	body, _ := json.Marshal(map[string]any{"request": map[string]any{
+		"createLink": true,
+		"settings": map[string]any{
+			"allowAnonymousAccess": false, "linkKind": 2, "nav": "", "password": "",
+			"restrictShareMembership": false, "role": 1, "scope": 1, "updatePassword": false,
+		},
+	}})
+	endpoint := strings.TrimRight(siteURL, "/") + "/_api/web/Lists(@list)/GetItemByUniqueId(@item)/ShareLink?@list='" +
+		url.QueryEscape(listID) + "'&@item='" + url.QueryEscape(strings.Trim(itemID, "{}")) + "'"
+	type sharingLinkInfo struct {
+		URL     any `json:"Url"`
+		ShareID any `json:"ShareId"`
+	}
+	var result struct {
+		SharingLinkInfo sharingLinkInfo `json:"sharingLinkInfo"`
+		D               struct {
+			SharingLinkInfo sharingLinkInfo `json:"sharingLinkInfo"`
+			ShareLink       struct {
+				SharingLinkInfo sharingLinkInfo `json:"sharingLinkInfo"`
+			} `json:"ShareLink"`
+		} `json:"d"`
+	}
+	if err := c.sharePointJSON(ctx, http.MethodPost, endpoint, token, digest, body, "application/json;odata=verbose", &result); err != nil {
+		return "", "", fmt.Errorf("create SharePoint link: %w", err)
+	}
+	shareURL := firstNonEmpty(
+		sharePointJSONText(result.SharingLinkInfo.URL),
+		sharePointJSONText(result.D.SharingLinkInfo.URL),
+		sharePointJSONText(result.D.ShareLink.SharingLinkInfo.URL),
+	)
+	if shareURL == "" {
+		return "", "", fmt.Errorf("SharePoint returned no sharing link")
+	}
+	return shareURL, firstNonEmpty(
+		sharePointJSONText(result.SharingLinkInfo.ShareID),
+		sharePointJSONText(result.D.SharingLinkInfo.ShareID),
+		sharePointJSONText(result.D.ShareLink.SharingLinkInfo.ShareID),
+	), nil
+}
+
+func sharePointJSONText(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case map[string]any:
+		for _, key := range []string{"Value", "value"} {
+			if text, ok := typed[key].(string); ok {
+				return text
+			}
+		}
+	}
+	return ""
 }
 
 func numberedFileName(name string, suffix int) string {
@@ -121,7 +208,7 @@ func (c *Client) sharePointDigest(ctx context.Context, siteURL, token string) (s
 	return out.D.GetContextWebInformation.FormDigestValue, nil
 }
 
-func (c *Client) shareSharePointFile(ctx context.Context, siteURL, fileURL, token, digest string, recipients []string) error {
+func (c *Client) shareSharePointFile(ctx context.Context, siteURL, fileURL, token, digest string, recipients []string) (string, error) {
 	seen := make(map[string]bool)
 	people := make([]map[string]string, 0, len(recipients))
 	for _, recipient := range recipients {
@@ -132,7 +219,7 @@ func (c *Client) shareSharePointFile(ctx context.Context, siteURL, fileURL, toke
 		}
 	}
 	if len(people) == 0 {
-		return fmt.Errorf("cannot share SharePoint file: no participant email address")
+		return "", fmt.Errorf("cannot share SharePoint file: no participant email address")
 	}
 	peopleJSON, _ := json.Marshal(people)
 	body, _ := json.Marshal(map[string]any{
@@ -140,11 +227,22 @@ func (c *Client) shareSharePointFile(ctx context.Context, siteURL, fileURL, toke
 		"groupId": 0, "propagateAcl": false, "sendEmail": false,
 		"includeAnonymousLinkInEmail": false, "emailSubject": "", "emailBody": "", "useSimplifiedRoles": true,
 	})
-	if err := c.sharePointJSON(ctx, http.MethodPost, strings.TrimRight(siteURL, "/")+"/_api/SP.Web.ShareObject",
-		token, digest, body, "application/json;odata=verbose", nil); err != nil {
-		return fmt.Errorf("share SharePoint file: %w", err)
+	var result struct {
+		D struct {
+			ShareObject struct {
+				URL          string `json:"Url"`
+				ErrorMessage string `json:"ErrorMessage"`
+			} `json:"ShareObject"`
+		} `json:"d"`
 	}
-	return nil
+	if err := c.sharePointJSON(ctx, http.MethodPost, strings.TrimRight(siteURL, "/")+"/_api/SP.Web.ShareObject",
+		token, digest, body, "application/json;odata=verbose", &result); err != nil {
+		return "", fmt.Errorf("share SharePoint file: %w", err)
+	}
+	if result.D.ShareObject.ErrorMessage != "" {
+		return "", fmt.Errorf("share SharePoint file: %s", result.D.ShareObject.ErrorMessage)
+	}
+	return result.D.ShareObject.URL, nil
 }
 
 func (c *Client) sharePointJSON(ctx context.Context, method, endpoint, token, digest string, body []byte, contentType string, out any) error {

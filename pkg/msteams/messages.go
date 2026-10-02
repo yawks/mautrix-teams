@@ -23,6 +23,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -72,6 +73,11 @@ func (c *Client) SendMessage(ctx context.Context, threadID, content string, opts
 	}
 	if opts.ClientMessageID == "" {
 		opts.ClientMessageID = FormatTeamsTime(time.Now())
+	}
+	// The chat service returns 201 but silently drops file-only RichText messages
+	// when the content field is omitted.
+	if len(opts.SharedFiles) > 0 && content == "" {
+		content = "<p></p>"
 	}
 	body := sendMessageRequest{
 		ClientMessageID: opts.ClientMessageID,
@@ -139,26 +145,45 @@ func buildProperties(opts SendOptions) any {
 			SiteURL  string `json:"siteUrl"`
 			ShareURL string `json:"shareUrl"`
 			FileSize int64  `json:"fileSize,omitempty"`
+			ShareID  string `json:"shareId,omitempty"`
+		}
+		type chicletState struct {
+			ServiceName string `json:"serviceName"`
+			State       string `json:"state"`
+		}
+		type sharePointIDs struct {
+			ListItemUniqueID string `json:"listItemUniqueId"`
+			SiteID           string `json:"siteId,omitempty"`
 		}
 		type fileEntry struct {
-			Type      string   `json:"@type"`
-			ItemID    string   `json:"itemid"`
-			ID        string   `json:"id"`
-			FileName  string   `json:"fileName"`
-			FileSize  int64    `json:"fileSize,omitempty"`
-			FileInfo  fileInfo `json:"fileInfo"`
-			BaseURL   string   `json:"baseUrl"`
-			ObjectURL string   `json:"objectUrl"`
+			Type          string        `json:"@type"`
+			ItemID        string        `json:"itemid"`
+			ID            string        `json:"id"`
+			Version       int           `json:"version"`
+			FileName      string        `json:"fileName"`
+			FileType      string        `json:"fileType"`
+			Title         string        `json:"title"`
+			State         string        `json:"state"`
+			FileSize      int64         `json:"fileSize,omitempty"`
+			FileInfo      fileInfo      `json:"fileInfo"`
+			FileChiclet   chicletState  `json:"fileChicletState"`
+			SharePointIDs sharePointIDs `json:"sharepointIds"`
+			BaseURL       string        `json:"baseUrl"`
+			ObjectURL     string        `json:"objectUrl"`
 		}
 		files := make([]fileEntry, 0, len(opts.SharedFiles))
 		for _, file := range opts.SharedFiles {
 			if file.Name == "" || file.FileURL == "" {
 				continue
 			}
+			fileType := strings.TrimPrefix(strings.ToLower(path.Ext(file.Name)), ".")
 			files = append(files, fileEntry{
-				Type: "http://schema.skype.com/File", ItemID: file.ItemID, ID: file.ItemID,
-				FileName: file.Name, FileSize: file.Size, BaseURL: file.SiteURL, ObjectURL: file.FileURL,
-				FileInfo: fileInfo{FileURL: file.FileURL, SiteURL: file.SiteURL, ShareURL: file.ShareURL, FileSize: file.Size},
+				Type: "http://schema.skype.com/File", ItemID: file.ItemID, ID: file.ItemID, Version: 2,
+				FileName: file.Name, FileType: fileType, Title: file.Name, State: "active",
+				FileSize: file.Size, BaseURL: file.SiteURL, ObjectURL: file.FileURL,
+				FileInfo:      fileInfo{FileURL: file.FileURL, SiteURL: file.SiteURL, ShareURL: file.ShareURL, ShareID: file.ShareID, FileSize: file.Size},
+				FileChiclet:   chicletState{ServiceName: "p2p", State: "active"},
+				SharePointIDs: sharePointIDs{ListItemUniqueID: file.ItemID, SiteID: file.SiteID},
 			})
 		}
 		if serialised, err := json.Marshal(files); err == nil && len(files) > 0 {

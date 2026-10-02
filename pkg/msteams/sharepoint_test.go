@@ -2,6 +2,7 @@ package msteams
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -30,10 +31,25 @@ func TestUploadSharedFile(t *testing.T) {
 				_, _ = w.Write([]byte(`{"error":{"code":"-2130575257, Microsoft.SharePoint.SPException"}}`))
 				return
 			}
-			_, _ = w.Write([]byte(`{"d":{"UniqueId":"{file-id}","ServerRelativeUrl":"/personal/me/Documents/report (1).pdf","Name":"report (1).pdf"}}`))
+			_, _ = w.Write([]byte(`{"d":{"UniqueId":"{file-id}","ListId":"{list-id}","ServerRelativeUrl":"/personal/me/Documents/report (1).pdf","Name":"report (1).pdf"}}`))
 		case strings.HasSuffix(r.URL.Path, "/_api/SP.Web.ShareObject"):
 			shared = true
-			_, _ = w.Write([]byte(`{"d":{"ShareObject":{}}}`))
+			_, _ = w.Write([]byte(`{"d":{"ShareObject":{"Url":"https://example.sharepoint.com/:w:/g/shared"}}}`))
+		case strings.HasSuffix(r.URL.Path, "/ShareLink"):
+			var body struct {
+				Request struct {
+					Settings struct {
+						LinkKind int `json:"linkKind"`
+						Scope    int `json:"scope"`
+					} `json:"settings"`
+				} `json:"request"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Request.Settings.LinkKind != 2 || body.Request.Settings.Scope != 1 {
+				t.Errorf("unexpected ShareLink request: err=%v body=%+v", err, body)
+			}
+			_, _ = w.Write([]byte(`{"d":{"ShareLink":{"sharingLinkInfo":{"Url":{"Value":"https://example.sharepoint.com/:w:/g/shared"},"ShareId":"share-id"}}}}`))
+		case strings.HasSuffix(r.URL.Path, "/_api/site"):
+			_, _ = w.Write([]byte(`{"d":{"Id":"{site-id}"}}`))
 		default:
 			t.Fatalf("unexpected endpoint %s", r.URL.String())
 		}
@@ -53,7 +69,9 @@ func TestUploadSharedFile(t *testing.T) {
 	if uploadAttempts != 2 || !shared {
 		t.Fatalf("uploadAttempts=%d shared=%v", uploadAttempts, shared)
 	}
-	if file.ItemID != "file-id" || file.Name != "report (1).pdf" || !strings.HasSuffix(file.FileURL, "/Documents/report (1).pdf") {
+	if file.ItemID != "file-id" || file.Name != "report (1).pdf" ||
+		!strings.HasSuffix(file.FileURL, "/Documents/report (1).pdf") || file.ShareURL != "https://example.sharepoint.com/:w:/g/shared" ||
+		file.ShareID != "share-id" || file.SiteID != "site-id" {
 		t.Fatalf("unexpected uploaded file: %+v", file)
 	}
 }

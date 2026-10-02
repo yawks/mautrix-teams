@@ -221,17 +221,42 @@ func TestSendMessagePlainText(t *testing.T) {
 func TestBuildPropertiesIncludesSharedFiles(t *testing.T) {
 	properties, ok := buildProperties(SendOptions{SharedFiles: []SharedFile{{
 		Name: "report.pdf", ItemID: "file-id", SiteURL: "https://example.sharepoint.com/personal/me",
-		FileURL: "https://example.sharepoint.com/personal/me/Documents/report.pdf", Size: 42,
+		SiteID: "site-id", FileURL: "https://example.sharepoint.com/personal/me/Documents/report.pdf", Size: 42,
 	}}}).(map[string]any)
 	if !ok {
 		t.Fatalf("buildProperties returned %T", properties)
 	}
 	files, ok := properties["files"].(string)
-	if !ok || !strings.Contains(files, `"fileName":"report.pdf"`) || !strings.Contains(files, `"itemid":"file-id"`) {
+	if !ok || !strings.Contains(files, `"fileName":"report.pdf"`) || !strings.Contains(files, `"itemid":"file-id"`) ||
+		!strings.Contains(files, `"version":2`) || !strings.Contains(files, `"fileType":"pdf"`) ||
+		!strings.Contains(files, `"state":"active"`) || !strings.Contains(files, `"listItemUniqueId":"file-id"`) ||
+		!strings.Contains(files, `"siteId":"site-id"`) {
 		t.Fatalf("unexpected files property: %#v", properties["files"])
 	}
 	if properties["formatVariant"] != "TEAMS" {
 		t.Fatalf("formatVariant=%#v", properties["formatVariant"])
+	}
+}
+
+func TestSendMessageFileOnlyIncludesHTMLContent(t *testing.T) {
+	var captured sendMessageRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&captured)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newClientAt(t, srv.URL)
+	_, err := c.SendMessage(context.Background(), "19:chat@thread.v2", "", SendOptions{
+		ContentType: "html",
+		SharedFiles: []SharedFile{{Name: "report.pdf", ItemID: "file-id", FileURL: "https://example/report.pdf"}},
+	})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if captured.Content != "<p></p>" || captured.MessageType != "RichText/Html" || captured.ContentType != "html" {
+		t.Fatalf("unexpected file-only message: %+v", captured)
 	}
 }
 
