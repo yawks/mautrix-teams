@@ -260,6 +260,30 @@ func TestSendMessageFileOnlyIncludesHTMLContent(t *testing.T) {
 	}
 }
 
+func TestEditMessageContentType(t *testing.T) {
+	for _, contentType := range []string{"html", "text"} {
+		t.Run(contentType, func(t *testing.T) {
+			var captured sendMessageRequest
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPut {
+					t.Errorf("method = %s, want PUT", r.Method)
+				}
+				_ = json.NewDecoder(r.Body).Decode(&captured)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			t.Cleanup(srv.Close)
+			content := "A &amp; B<br>second<br><br>fourth"
+			if err := newClientAt(t, srv.URL).EditMessage(context.Background(), "room", "message", content, SendOptions{ContentType: contentType}); err != nil {
+				t.Fatal(err)
+			}
+			if captured.ContentType != contentType || captured.Content != content {
+				t.Fatalf("unexpected edit payload: %+v", captured)
+			}
+		})
+	}
+}
+
 func TestDeleteMessage(t *testing.T) {
 	var hit bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -291,7 +315,8 @@ func TestFetchHistory(t *testing.T) {
 		_, _ = w.Write([]byte(`{
 			"messages": [
 				{"id":"1","from":"8:orgid:a","content":"hi","contenttype":"text","composetime":"1700000000000"},
-				{"id":"2","from":"8:orgid:b","content":"<p>yo</p>","contenttype":"html","composetime":"1700000000001"}
+				{"id":"2","from":"8:orgid:b","content":"<p>yo</p>","contenttype":"html","composetime":"1700000000001"},
+				{"id":"3","messagetype":"Text","content":"{\"scopeId\":\"scope\",\"callId\":\"call\",\"iCalUid\":\"ical\",\"meetingTenantId\":\"tenant\"}"}
 			],
 			"_metadata": {
 				"backwardLink": "https://example/v1/users/ME/conversations/19:abc@thread.v2/messages?syncState=cursor-1&pageSize=10"
@@ -305,11 +330,14 @@ func TestFetchHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchHistory: %v", err)
 	}
-	if len(res.Messages) != 2 {
-		t.Fatalf("got %d messages, want 2", len(res.Messages))
+	if len(res.Messages) != 3 {
+		t.Fatalf("got %d messages, want 3", len(res.Messages))
 	}
 	if res.Messages[0].ID != "1" || res.Messages[1].Content != "<p>yo</p>" {
 		t.Errorf("messages wrong: %+v", res.Messages)
+	}
+	if !IsMeetingRecordingContent(res.Messages[2].Content) {
+		t.Fatal("recording metadata missing from history")
 	}
 	if !res.HasMore || res.Next != "cursor-1" {
 		t.Errorf("cursor propagation failed: %+v", res)
@@ -325,12 +353,12 @@ func TestVoiceMediaMessageIsIncludedInHistory(t *testing.T) {
 	}
 }
 
-func TestMeetingMetadataContentIsHidden(t *testing.T) {
-	content := `{"scopeId":"scope","storageId":"user\@tenant","callId":"call","iCalUid":"ical","meetingTenantId":"tenant","isExportedToOdsp":true}`
-	if !isMeetingMetadataContent(content) {
+func TestMeetingRecordingContent(t *testing.T) {
+	content := `{"scopeId":"scope","storageId":"user@tenant","callId":"call","iCalUid":"ical","meetingTenantId":"tenant","isExportedToOdsp":true}`
+	if !IsMeetingRecordingContent(content) {
 		t.Fatal("meeting metadata was not detected")
 	}
-	if isMeetingMetadataContent(`{"scopeId":"scope","callId":"call"}`) {
+	if IsMeetingRecordingContent(`{"scopeId":"scope","callId":"call"}`) {
 		t.Fatal("ordinary JSON was treated as meeting metadata")
 	}
 }

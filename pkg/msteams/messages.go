@@ -205,7 +205,7 @@ func (c *Client) EditMessage(ctx context.Context, threadID, messageID, newConten
 		ClientMessageID: FormatTeamsTime(time.Now()),
 		Content:         newContent,
 		MessageType:     messageTypeFor(opts),
-		ContentType:     "text",
+		ContentType:     contentTypeFor(opts),
 		IMDisplayName:   opts.DisplayName,
 		Properties:      buildProperties(opts),
 	}
@@ -457,7 +457,7 @@ func (c *Client) FetchHistory(ctx context.Context, threadID string, opts History
 		HasMore: next != "" && len(raw.Messages) > 0,
 	}
 	for _, m := range raw.Messages {
-		if !isChatMessage(m.MessageType) || isMeetingMetadataContent(m.Content) {
+		if !isChatMessage(m.MessageType) {
 			continue
 		}
 		out.Messages = append(out.Messages, convertRawMessage(&m, threadID))
@@ -561,13 +561,17 @@ func isChatMessage(messageType string) bool {
 	return false
 }
 
-func isMeetingMetadataContent(content string) bool {
-	content = strings.TrimSpace(content)
-	return strings.HasPrefix(content, "{") &&
-		strings.Contains(content, `"scopeId":`) &&
-		strings.Contains(content, `"callId":`) &&
-		strings.Contains(content, `"iCalUid":`) &&
-		strings.Contains(content, `"meetingTenantId":`)
+// IsMeetingRecordingContent identifies Teams meeting recording metadata.
+func IsMeetingRecordingContent(content string) bool {
+	var metadata struct {
+		ScopeID         string `json:"scopeId"`
+		CallID          string `json:"callId"`
+		ICalUID         string `json:"iCalUid"`
+		MeetingTenantID string `json:"meetingTenantId"`
+	}
+	return json.Unmarshal([]byte(content), &metadata) == nil &&
+		metadata.ScopeID != "" && metadata.CallID != "" &&
+		metadata.ICalUID != "" && metadata.MeetingTenantID != ""
 }
 
 // UploadAttachment runs the three-step AMS flow: register object, PUT bytes,
