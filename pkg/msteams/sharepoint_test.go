@@ -14,15 +14,21 @@ import (
 func TestUploadSharedFile(t *testing.T) {
 	var uploadAttempts int
 	var shared bool
+	var baseURL string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer sharepoint-token" {
 			t.Errorf("missing SharePoint authorization")
 		}
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/_api/SP.UserProfiles.PeopleManager/GetMyProperties"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"d": map[string]string{"PersonalUrl": baseURL + "/personal/me/"}})
 		case strings.HasSuffix(r.URL.Path, "/_api/contextinfo"):
 			_, _ = w.Write([]byte(`{"d":{"GetContextWebInformation":{"FormDigestValue":"digest"}}}`))
 		case strings.Contains(r.URL.Path, "/Files/Add"):
 			uploadAttempts++
+			if !strings.Contains(r.URL.Path, "GetFolderByServerRelativeUrl('/personal/me/Documents')") {
+				t.Errorf("upload must target own Documents folder: %s", r.URL.Path)
+			}
 			if r.Header.Get("X-RequestDigest") != "digest" {
 				t.Errorf("missing request digest")
 			}
@@ -55,14 +61,17 @@ func TestUploadSharedFile(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	baseURL = srv.URL
 
 	c := newClientAt(t, srv.URL)
 	c.sharePointAuth = map[string]*Token{
 		strings.TrimPrefix(srv.URL, "http://"): {Value: "sharepoint-token", ExpiresAt: time.Now().Add(time.Hour)},
 	}
-	file, err := c.UploadSharedFile(context.Background(), SharedFile{
-		SiteURL: srv.URL + "/personal/me", FileURL: srv.URL + "/personal/me/Documents/existing.pdf",
-	}, "report.pdf", []byte("document"), []string{"reader@example.com"})
+	location, err := c.PersonalSharedFileLocation(context.Background(), srv.URL+"/personal/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := c.UploadSharedFile(context.Background(), location, "report.pdf", []byte("document"), []string{"reader@example.com"})
 	if err != nil {
 		t.Fatalf("UploadSharedFile: %v", err)
 	}
@@ -82,5 +91,43 @@ func TestNumberedFileName(t *testing.T) {
 	}
 	if !sharePointFileAlreadyExists(fmt.Errorf(`server returned 400: {"code":"-2130575257"}`)) {
 		t.Fatal("SharePoint collision was not recognized")
+	}
+}
+
+func TestPersonalSharedFileLocation(t *testing.T) {
+	for _, personalPath := range []string{"/personal/actual_account_42/", ""} {
+		t.Run(personalPath, func(t *testing.T) {
+			var baseURL string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/_api/SP.UserProfiles.PeopleManager/GetMyProperties" ||
+					r.URL.Query().Get("$select") != "PersonalUrl" || r.Header.Get("Authorization") != "Bearer token" {
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+				}
+				personalURL := ""
+				if personalPath != "" {
+					personalURL = baseURL + personalPath
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"d": map[string]string{"PersonalUrl": personalURL}})
+			}))
+			defer srv.Close()
+			baseURL = srv.URL
+			c := newClientAt(t, srv.URL)
+			c.sharePointAuth = map[string]*Token{
+				strings.TrimPrefix(srv.URL, "http://"): {Value: "token", ExpiresAt: time.Now().Add(time.Hour)},
+			}
+			location, err := c.PersonalSharedFileLocation(context.Background(), srv.URL+"/personal/someone_else")
+			if personalPath == "" {
+				if err == nil {
+					t.Fatal("missing personal site must not fall back to another user's folder")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if location.SiteURL != srv.URL+"/personal/actual_account_42" || location.FileURL != location.SiteURL+"/Documents/location" {
+				t.Fatalf("unexpected own upload location: %+v", location)
+			}
+		})
 	}
 }

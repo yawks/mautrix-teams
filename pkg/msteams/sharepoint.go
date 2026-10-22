@@ -12,6 +12,34 @@ import (
 	"strings"
 )
 
+// PersonalSharedFileLocation resolves the signed-in user's OneDrive site from
+// SharePoint, rather than guessing its URL from an email or a shared file owner.
+func (c *Client) PersonalSharedFileLocation(ctx context.Context, siteURL string) (SharedFile, error) {
+	site, err := url.Parse(siteURL)
+	if err != nil || site.Host == "" || (site.Scheme != "https" && site.Scheme != "http") {
+		return SharedFile{}, fmt.Errorf("invalid SharePoint site URL")
+	}
+	token, err := c.freshSharePointToken(ctx, site.Host)
+	if err != nil {
+		return SharedFile{}, err
+	}
+	var profile struct {
+		D struct {
+			PersonalURL string `json:"PersonalUrl"`
+		} `json:"d"`
+	}
+	endpoint := site.Scheme + "://" + site.Host + "/_api/SP.UserProfiles.PeopleManager/GetMyProperties?$select=PersonalUrl"
+	if err := c.sharePointJSON(ctx, http.MethodGet, endpoint, token, "", nil, "application/json", &profile); err != nil {
+		return SharedFile{}, fmt.Errorf("resolve own SharePoint site: %w", err)
+	}
+	personal, err := url.Parse(profile.D.PersonalURL)
+	if err != nil || personal.Host == "" || (personal.Scheme != "https" && personal.Scheme != "http") {
+		return SharedFile{}, fmt.Errorf("SharePoint returned no valid personal site; open OneDrive in Teams to initialize it, then retry")
+	}
+	personalURL := strings.TrimRight(personal.String(), "/")
+	return SharedFile{SiteURL: personalURL, FileURL: personalURL + "/Documents/location"}, nil
+}
+
 // UploadSharedFile uploads a document next to an existing Teams chat file and
 // grants the chat participants read access using SharePoint's REST API. This
 // uses the delegated SharePoint token minted from the Teams session; it does
