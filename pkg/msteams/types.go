@@ -137,14 +137,18 @@ type Attachment struct {
 }
 
 type SharedFile struct {
-	Name     string `json:"name"`
-	ItemID   string `json:"item_id"`
-	SiteURL  string `json:"site_url"`
-	SiteID   string `json:"site_id,omitempty"`
-	FileURL  string `json:"file_url"`
-	ShareURL string `json:"share_url"`
-	ShareID  string `json:"share_id,omitempty"`
-	Size     int64  `json:"size,omitempty"`
+	DriveItemID string `json:"drive_item_id,omitempty"`
+	DriveID     string `json:"drive_id,omitempty"`
+	ListID      string `json:"list_id,omitempty"`
+	WebID       string `json:"web_id,omitempty"`
+	Name        string `json:"name"`
+	ItemID      string `json:"item_id"`
+	SiteURL     string `json:"site_url"`
+	SiteID      string `json:"site_id,omitempty"`
+	FileURL     string `json:"file_url"`
+	ShareURL    string `json:"share_url"`
+	ShareID     string `json:"share_id,omitempty"`
+	Size        int64  `json:"size,omitempty"`
 }
 
 type Reaction struct {

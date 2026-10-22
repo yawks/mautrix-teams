@@ -238,6 +238,44 @@ func TestBuildPropertiesIncludesSharedFiles(t *testing.T) {
 	}
 }
 
+// These identifiers occupy distinct fields in native Teams file cards; the
+// SharePoint GUID is not interchangeable with the OneDrive drive item ID.
+func TestBuildPropertiesIncludesNativeCSVFileMetadata(t *testing.T) {
+	props := buildProperties(SendOptions{SharedFiles: []SharedFile{{
+		Name: "report.csv", ItemID: "sharepoint-guid", DriveItemID: "onedrive-item",
+		DriveID: "drive-id", ListID: "list-id", WebID: "web-id", SiteID: "site-id",
+		SiteURL: "https://tenant.sharepoint.com/personal/me", FileURL: "https://tenant.sharepoint.com/personal/me/Documents/report.csv",
+	}}}).(map[string]any)
+	var files []struct {
+		Type     string `json:"type"`
+		FileType string `json:"fileType"`
+		ItemID   string `json:"itemid"`
+		FileInfo struct {
+			ItemID string `json:"itemId"`
+		} `json:"fileInfo"`
+		SharePointIDs map[string]string `json:"sharepointIds"`
+		Preview       map[string]any    `json:"filePreview"`
+	}
+	if err := json.Unmarshal([]byte(props["files"].(string)), &files); err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("files=%+v", files)
+	}
+	f := files[0]
+	if f.Type != "csv" || f.FileType != "csv" || f.ItemID != "sharepoint-guid" || f.FileInfo.ItemID != "onedrive-item" {
+		t.Fatalf("incorrect native file card: %+v", f)
+	}
+	if len(f.Preview) != 3 || f.Preview["previewUrl"] != "" || f.Preview["previewHeight"] != float64(0) || f.Preview["previewWidth"] != float64(0) {
+		t.Fatalf("expected native empty preview descriptor: %+v", f.Preview)
+	}
+	for key, want := range map[string]string{"driveId": "drive-id", "listId": "list-id", "webId": "web-id", "siteId": "site-id", "listItemUniqueId": "sharepoint-guid", "siteUrl": "https://tenant.sharepoint.com/personal/me"} {
+		if f.SharePointIDs[key] != want {
+			t.Errorf("%s=%q, want %q", key, f.SharePointIDs[key], want)
+		}
+	}
+}
+
 func TestSendMessageFileOnlyIncludesHTMLContent(t *testing.T) {
 	var captured sendMessageRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

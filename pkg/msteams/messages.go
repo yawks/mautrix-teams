@@ -141,6 +141,7 @@ func buildProperties(opts SendOptions) any {
 	}
 	if len(opts.SharedFiles) > 0 {
 		type fileInfo struct {
+			ItemID   string `json:"itemId,omitempty"`
 			FileURL  string `json:"fileUrl"`
 			SiteURL  string `json:"siteUrl"`
 			ShareURL string `json:"shareUrl"`
@@ -152,8 +153,17 @@ func buildProperties(opts SendOptions) any {
 			State       string `json:"state"`
 		}
 		type sharePointIDs struct {
+			DriveID          string `json:"driveId,omitempty"`
+			ListID           string `json:"listId,omitempty"`
+			WebID            string `json:"webId,omitempty"`
+			SiteURL          string `json:"siteUrl,omitempty"`
 			ListItemUniqueID string `json:"listItemUniqueId"`
 			SiteID           string `json:"siteId,omitempty"`
+		}
+		type filePreview struct {
+			URL    string `json:"previewUrl"`
+			Height int    `json:"previewHeight"`
+			Width  int    `json:"previewWidth"`
 		}
 		type fileEntry struct {
 			Type          string        `json:"@type"`
@@ -162,11 +172,13 @@ func buildProperties(opts SendOptions) any {
 			Version       int           `json:"version"`
 			FileName      string        `json:"fileName"`
 			FileType      string        `json:"fileType"`
+			FileExtension string        `json:"type"`
 			Title         string        `json:"title"`
 			State         string        `json:"state"`
 			FileSize      int64         `json:"fileSize,omitempty"`
 			FileInfo      fileInfo      `json:"fileInfo"`
 			FileChiclet   chicletState  `json:"fileChicletState"`
+			FilePreview   filePreview   `json:"filePreview"`
 			SharePointIDs sharePointIDs `json:"sharepointIds"`
 			BaseURL       string        `json:"baseUrl"`
 			ObjectURL     string        `json:"objectUrl"`
@@ -179,11 +191,11 @@ func buildProperties(opts SendOptions) any {
 			fileType := strings.TrimPrefix(strings.ToLower(path.Ext(file.Name)), ".")
 			files = append(files, fileEntry{
 				Type: "http://schema.skype.com/File", ItemID: file.ItemID, ID: file.ItemID, Version: 2,
-				FileName: file.Name, FileType: fileType, Title: file.Name, State: "active",
+				FileName: file.Name, FileType: fileType, FileExtension: fileType, Title: file.Name, State: "active",
 				FileSize: file.Size, BaseURL: file.SiteURL, ObjectURL: file.FileURL,
-				FileInfo:      fileInfo{FileURL: file.FileURL, SiteURL: file.SiteURL, ShareURL: file.ShareURL, ShareID: file.ShareID, FileSize: file.Size},
+				FileInfo:      fileInfo{ItemID: file.DriveItemID, FileURL: file.FileURL, SiteURL: file.SiteURL, ShareURL: file.ShareURL, ShareID: file.ShareID, FileSize: file.Size},
 				FileChiclet:   chicletState{ServiceName: "p2p", State: "active"},
-				SharePointIDs: sharePointIDs{ListItemUniqueID: file.ItemID, SiteID: file.SiteID},
+				SharePointIDs: sharePointIDs{ListItemUniqueID: file.ItemID, SiteID: file.SiteID, DriveID: file.DriveID, ListID: file.ListID, WebID: file.WebID, SiteURL: file.SiteURL},
 			})
 		}
 		if serialised, err := json.Marshal(files); err == nil && len(files) > 0 {

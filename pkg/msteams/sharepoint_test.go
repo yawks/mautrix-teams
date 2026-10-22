@@ -2,6 +2,7 @@ package msteams
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -54,8 +55,13 @@ func TestUploadSharedFile(t *testing.T) {
 				t.Errorf("unexpected ShareLink request: err=%v body=%+v", err, body)
 			}
 			_, _ = w.Write([]byte(`{"d":{"ShareLink":{"sharingLinkInfo":{"Url":{"Value":"https://example.sharepoint.com/:w:/g/shared"},"ShareId":"share-id"}}}}`))
-		case strings.HasSuffix(r.URL.Path, "/_api/site"):
-			_, _ = w.Write([]byte(`{"d":{"Id":"{site-id}"}}`))
+		case strings.Contains(r.URL.Path, "/_api/v2.0/shares/"):
+			encoded := strings.TrimSuffix(strings.Split(r.URL.Path, "/shares/")[1], "/driveItem")
+			decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(encoded, "u!"))
+			if err != nil || string(decoded) != "https://example.sharepoint.com/:w:/g/shared" || r.URL.Query().Get("$select") != "id,parentReference,sharepointIds" {
+				t.Errorf("unexpected file metadata request: %s", r.URL)
+			}
+			_, _ = w.Write([]byte(`{"id":"drive-item-id","parentReference":{"driveId":"drive-id"},"sharepointIds":{"siteId":"site-id","webId":"web-id","listId":"list-id"}}`))
 		default:
 			t.Fatalf("unexpected endpoint %s", r.URL.String())
 		}
@@ -80,7 +86,8 @@ func TestUploadSharedFile(t *testing.T) {
 	}
 	if file.ItemID != "file-id" || file.Name != "report (1).pdf" ||
 		!strings.HasSuffix(file.FileURL, "/Documents/report (1).pdf") || file.ShareURL != "https://example.sharepoint.com/:w:/g/shared" ||
-		file.ShareID != "share-id" || file.SiteID != "site-id" {
+		file.ShareID != "share-id" || file.SiteID != "site-id" || file.DriveItemID != "drive-item-id" ||
+		file.DriveID != "drive-id" || file.ListID != "list-id" || file.WebID != "web-id" {
 		t.Fatalf("unexpected uploaded file: %+v", file)
 	}
 }
@@ -129,5 +136,16 @@ func TestPersonalSharedFileLocation(t *testing.T) {
 				t.Fatalf("unexpected own upload location: %+v", location)
 			}
 		})
+	}
+}
+
+func TestSharePointFileMetadataRejectsIncompleteResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"drive-item-id"}`))
+	}))
+	defer srv.Close()
+	c := newClientAt(t, srv.URL)
+	if _, err := c.sharePointFileMetadata(context.Background(), srv.URL, "https://example.com/shared", "token"); err == nil {
+		t.Fatal("incomplete drive metadata must not produce a degraded Teams card")
 	}
 }

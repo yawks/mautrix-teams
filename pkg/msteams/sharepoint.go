@@ -3,6 +3,7 @@ package msteams
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -115,30 +116,40 @@ func (c *Client) UploadSharedFile(ctx context.Context, location SharedFile, name
 	if err != nil {
 		return nil, err
 	}
-	siteID, err := c.sharePointSiteID(ctx, location.SiteURL, token)
+	metadata, err := c.sharePointFileMetadata(ctx, location.SiteURL, shareURL, token)
 	if err != nil {
 		return nil, err
 	}
-	return &SharedFile{Name: actualName, ItemID: strings.Trim(itemID, "{}"), SiteURL: location.SiteURL, SiteID: siteID,
+	return &SharedFile{Name: actualName, ItemID: strings.Trim(itemID, "{}"), SiteURL: location.SiteURL,
+		SiteID: metadata.SharePointIDs.SiteID, WebID: metadata.SharePointIDs.WebID,
+		ListID: metadata.SharePointIDs.ListID, DriveID: metadata.ParentReference.DriveID, DriveItemID: metadata.ID,
 		FileURL: uploadedURL, ShareURL: shareURL, ShareID: shareID, Size: int64(len(data))}, nil
 }
 
-func (c *Client) sharePointSiteID(ctx context.Context, siteURL, token string) (string, error) {
-	var result struct {
-		ID string `json:"Id"`
-		D  struct {
-			ID string `json:"Id"`
-		} `json:"d"`
+type sharePointFileMetadata struct {
+	ID              string `json:"id"`
+	ParentReference struct {
+		DriveID string `json:"driveId"`
+	} `json:"parentReference"`
+	SharePointIDs struct {
+		SiteID string `json:"siteId"`
+		WebID  string `json:"webId"`
+		ListID string `json:"listId"`
+	} `json:"sharepointIds"`
+}
+
+// Teams resolves file icons and previews from the drive item and SharePoint IDs.
+func (c *Client) sharePointFileMetadata(ctx context.Context, siteURL, shareURL, token string) (*sharePointFileMetadata, error) {
+	encodedURL := "u!" + base64.RawURLEncoding.EncodeToString([]byte(shareURL))
+	endpoint := strings.TrimRight(siteURL, "/") + "/_api/v2.0/shares/" + encodedURL + "/driveItem?$select=id,parentReference,sharepointIds"
+	var result sharePointFileMetadata
+	if err := c.sharePointJSON(ctx, http.MethodGet, endpoint, token, "", nil, "application/json", &result); err != nil {
+		return nil, fmt.Errorf("get SharePoint file metadata: %w", err)
 	}
-	if err := c.sharePointJSON(ctx, http.MethodGet, strings.TrimRight(siteURL, "/")+"/_api/site?$select=Id",
-		token, "", nil, "application/json", &result); err != nil {
-		return "", fmt.Errorf("get SharePoint site ID: %w", err)
+	if result.ID == "" || result.ParentReference.DriveID == "" || result.SharePointIDs.SiteID == "" || result.SharePointIDs.WebID == "" || result.SharePointIDs.ListID == "" {
+		return nil, fmt.Errorf("SharePoint returned incomplete file metadata")
 	}
-	id := strings.Trim(firstNonEmpty(result.ID, result.D.ID), "{}")
-	if id == "" {
-		return "", fmt.Errorf("SharePoint returned no site ID")
-	}
-	return id, nil
+	return &result, nil
 }
 
 func (c *Client) createSharePointLink(ctx context.Context, siteURL, listID, itemID, token, digest string) (string, string, error) {
